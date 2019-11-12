@@ -12,13 +12,11 @@ import (
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/history/historydb"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/core/ledger/util"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/protos/common"
-	putils "github.com/hyperledger/fabric/protos/utils"
 )
 
 var logger = flogging.MustGetLogger("historyleveldb")
@@ -87,7 +85,7 @@ func (historyDB *historyDB) Commit(block *cached.Block) error {
 	txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
 
 	// write each tran's write set to history db
-	for _, envBytes := range block.Data.Data {
+	for i := range block.Data.Data {
 
 		// If the tran is marked as invalid, skip it
 		if txsFilter.IsInvalid(int(tranNo)) {
@@ -97,17 +95,17 @@ func (historyDB *historyDB) Commit(block *cached.Block) error {
 			continue
 		}
 
-		env, err := putils.GetEnvelopeFromBlock(envBytes)
+		env, err := block.UnmarshalSpecificEnvelope(i)
 		if err != nil {
 			return err
 		}
 
-		payload, err := putils.GetPayload(env)
+		payload, err := env.UnmarshalPayload()
 		if err != nil {
 			return err
 		}
 
-		chdr, err := putils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
+		chdr, err := payload.Header.UnmarshalChannelHeader()
 		if err != nil {
 			return err
 		}
@@ -115,17 +113,13 @@ func (historyDB *historyDB) Commit(block *cached.Block) error {
 		if common.HeaderType(chdr.Type) == common.HeaderType_ENDORSER_TRANSACTION {
 
 			// extract actions from the envelope message
-			respPayload, err := putils.GetActionFromEnvelope(envBytes)
+			ca, err := env.GetChaincodeAction()
 			if err != nil {
 				return err
 			}
 
-			//preparation for extracting RWSet from transaction
-			txRWSet := &rwsetutil.TxRwSet{}
-
-			// Get the Result from the Action and then Unmarshal
-			// it into a TxReadWriteSet using custom unmarshalling
-			if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
+			txRWSet, err := ca.UnmarshalRwSet()
+			if err != nil {
 				return err
 			}
 			// for each transaction, loop through the namespaces and writesets

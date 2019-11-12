@@ -205,6 +205,8 @@ func (h *Handler) handleMessageReadyState(msg *pb.ChaincodeMessage) error {
 
 	case pb.ChaincodeMessage_PUT_STATE:
 		go h.HandleTransaction(msg, h.HandlePutState)
+	case pb.ChaincodeMessage_PUT_ORACLE:
+		go h.HandleTransaction(msg, h.HandlePutOracle)
 	case pb.ChaincodeMessage_DEL_STATE:
 		go h.HandleTransaction(msg, h.HandleDelState)
 	case pb.ChaincodeMessage_INVOKE_CHAINCODE:
@@ -1026,6 +1028,21 @@ func (h *Handler) HandlePutState(msg *pb.ChaincodeMessage, txContext *Transactio
 		err = txContext.TXSimulator.SetState(chaincodeName, putState.Key, putState.Value)
 	}
 	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	return &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_RESPONSE, Txid: msg.Txid, ChannelId: msg.ChannelId}, nil
+}
+
+func (h *Handler) HandlePutOracle(msg *pb.ChaincodeMessage, txContext *TransactionContext) (*pb.ChaincodeMessage, error) {
+	putOracle := &pb.PutOracle{}
+	err := proto.Unmarshal(msg.Payload, putOracle)
+	if err != nil {
+		return nil, errors.Wrap(err, "unmarshal failed")
+	}
+
+	chaincodeName := h.ChaincodeName()
+	if err = txContext.TXSimulator.SetOracle(chaincodeName, putOracle.Key, putOracle.Value); err != nil {
 		return nil, errors.WithStack(err)
 	}
 

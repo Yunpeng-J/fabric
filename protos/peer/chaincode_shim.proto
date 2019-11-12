@@ -38,6 +38,7 @@ message ChaincodeMessage {
         GET_HISTORY_FOR_KEY = 19;
         GET_STATE_METADATA = 20;
         PUT_STATE_METADATA = 21;
+        PUT_ORACLE = 22;
     }
 
     Type type = 1;
@@ -80,6 +81,11 @@ message PutState {
 	string key = 1;
 	bytes value = 2;
 	string collection = 3;
+}
+
+message PutOracle {
+    string key = 1;
+    bytes value = 2;
 }
 
 message PutStateMetadata {

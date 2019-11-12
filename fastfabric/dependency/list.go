@@ -1,6 +1,8 @@
 package dependency
 
-import "github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
+import (
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
+)
 
 type TxNode struct {
 	elements   map[string]*TxElement
@@ -14,8 +16,8 @@ type TxNode struct {
 }
 
 type TxElement struct {
-	Value *Transaction
-	node  *TxNode
+	*Transaction
+	parentNode *TxNode
 }
 
 type skipList struct {
@@ -25,22 +27,23 @@ type skipList struct {
 }
 
 func NewSkipList() *skipList {
-	return &skipList{len: 0, txs: make(map[string][]*TxElement)}
+	return &skipList{len: 0, txs: map[string][]*TxElement{}, root: &TxNode{
+		rangeStart: version.NewHeight(0, 0),
+		rangeEnd:   version.NewHeight(0, 0),
+		isWrite:    true,
+	}}
 }
 
 func (l *skipList) Delete(txID string) {
-	tx, ok := l.txs[txID]
+	elements, ok := l.txs[txID]
 	if !ok {
 		return
 	}
-	for _, e := range tx {
-		node := e.node
-		node.removeElement(e)
+	for _, element := range elements {
+		node := element.parentNode
+		node.removeElement(element)
 		if len(node.elements) == 0 {
-			if node.skipNext != nil {
-				node.removeFromSkip()
-			}
-
+			node.removeFromSkip()
 			l.removeNode(node)
 		}
 
@@ -50,13 +53,18 @@ func (l *skipList) Delete(txID string) {
 }
 
 func (n *TxNode) removeElement(e *TxElement) {
-	e.node = nil
-	delete(n.elements, e.Value.TxID)
+	if n.next != nil {
+		for _, e := range n.next.elements {
+			e.removeDependency(e.Transaction)
+		}
+	}
+	e.parentNode = nil
+	delete(n.elements, e.TxID)
 }
 
 func (n *TxNode) removeFromSkip() {
-	if n.skipNext != n.next {
-		linkSkip(n.skipPrev, n.skipNext)
+	if n.skipNext == n.next {
+		linkSkip(n.skipPrev, n.next)
 	} else {
 		n.substituteSkipWith(n.next)
 	}
@@ -80,17 +88,6 @@ func (l *skipList) AddWrite(tx *Transaction) {
 }
 
 func (l *skipList) add(tx *Transaction, isWrite bool) {
-	var e *TxElement
-	if l.len == 0 {
-		e = l.addToEmpty(tx, isWrite)
-	} else {
-		e = l.addToNonEmpty(tx, isWrite)
-	}
-	l.len += 1
-	l.txs[tx.TxID] = append(l.txs[tx.TxID], e)
-}
-
-func (l *skipList) addToNonEmpty(tx *Transaction, isWrite bool) *TxElement {
 	skipClosest, closest := l.findClosestNode(tx)
 	var e *TxElement
 	if isWrite {
@@ -107,10 +104,11 @@ func (l *skipList) addToNonEmpty(tx *Transaction, isWrite bool) *TxElement {
 			e = closest.appendNewNode(tx, isWrite)
 		}
 	}
-	skipClosest.updateSkips(e.node)
+	skipClosest.updateSkips(e.parentNode)
 	e.addDependencies()
 
-	return e
+	l.len += 1
+	l.txs[tx.TxID] = append(l.txs[tx.TxID], e)
 }
 
 func (n *TxNode) substituteSkipWith(newNode *TxNode) {
@@ -121,29 +119,17 @@ func (n *TxNode) substituteSkipWith(newNode *TxNode) {
 }
 
 func (this *TxElement) addDependencies() {
-	n := this.node
+	n := this.parentNode
 	if n.next != nil {
-		for _, e := range n.next.elements {
-			e.Value.addDependence(this.Value)
+		for _, nextTx := range n.next.elements {
+			nextTx.addDependency(this.Transaction)
 		}
 	}
 	if n.prev != nil {
-		for _, e := range n.prev.elements {
-			this.Value.addDependence(e.Value)
+		for _, prevTx := range n.prev.elements {
+			this.addDependency(prevTx.Transaction)
 		}
 	}
-}
-
-func (l *skipList) addToEmpty(tx *Transaction, isWrite bool) *TxElement {
-	e := &TxElement{Value: tx}
-	rootNode := &TxNode{
-		elements:   map[string]*TxElement{tx.TxID: e},
-		rangeStart: tx.Version,
-		rangeEnd:   tx.Version,
-		isWrite:    isWrite}
-	e.node = rootNode
-	l.root = rootNode
-	return e
 }
 
 func (l *skipList) findClosestNode(tx *Transaction) (skipClosest, closest *TxNode) {
@@ -160,14 +146,18 @@ func (l *skipList) findClosestNode(tx *Transaction) (skipClosest, closest *TxNod
 	return skipClosest, closest
 }
 
+func (l *skipList) First() *TxNode {
+	return l.root.next
+}
+
 func (n *TxNode) appendNewNode(tx *Transaction, isWrite bool) *TxElement {
-	newElem := &TxElement{Value: tx}
+	newElem := &TxElement{Transaction: tx}
 	newNode := &TxNode{
 		elements:   map[string]*TxElement{tx.TxID: newElem},
 		rangeStart: tx.Version,
 		rangeEnd:   tx.Version,
 		isWrite:    isWrite}
-	newElem.node = newNode
+	newElem.parentNode = newNode
 
 	if n.rangeEnd.Compare(newNode.rangeStart) <= 0 {
 		link(newNode, n.next)
@@ -182,7 +172,7 @@ func (n *TxNode) appendNewNode(tx *Transaction, isWrite bool) *TxElement {
 }
 
 func (n *TxNode) add(tx *Transaction) *TxElement {
-	newElem := &TxElement{Value: tx, node: n}
+	newElem := &TxElement{Transaction: tx, parentNode: n}
 	n.elements[tx.TxID] = newElem
 	if n.rangeStart.Compare(tx.Version) > 0 {
 		n.rangeStart = tx.Version
@@ -219,15 +209,15 @@ func (n *TxNode) split(height *version.Height) (*TxNode, *TxNode) {
 
 	n.rangeEnd = nil
 	for txId, e := range n.elements {
-		if e.Value.Version.Compare(height) > 0 {
+		if e.Version.Compare(height) > 0 {
 			newNode.elements[txId] = e
-			e.node = newNode
-			if newNode.rangeStart == nil || newNode.rangeStart.Compare(e.Value.Version) > 0 {
-				newNode.rangeStart = e.Value.Version
+			e.parentNode = newNode
+			if newNode.rangeStart == nil || newNode.rangeStart.Compare(e.Version) > 0 {
+				newNode.rangeStart = e.Version
 			}
 		} else {
-			if n.rangeEnd == nil || n.rangeEnd.Compare(e.Value.Version) < 0 {
-				n.rangeEnd = e.Value.Version
+			if n.rangeEnd == nil || n.rangeEnd.Compare(e.Version) < 0 {
+				n.rangeEnd = e.Version
 			}
 		}
 	}
@@ -237,6 +227,23 @@ func (n *TxNode) split(height *version.Height) (*TxNode, *TxNode) {
 	}
 
 	return n, newNode
+}
+
+func (this *TxNode) setPrev(prev *TxNode) {
+	defer func() { this.prev = prev }()
+	if prev != nil {
+		for _, thisElement := range this.elements {
+			newDependencies := map[string]*Transaction{}
+			for _, prevElement := range prev.elements {
+				if prevElement.TxID == thisElement.TxID {
+					return
+				}
+				newDependencies[prevElement.TxID] = prevElement.Transaction
+			}
+			thisElement.dependencies = newDependencies
+		}
+
+	}
 }
 
 func linkSkip(n1 *TxNode, n2 *TxNode) {
@@ -253,6 +260,6 @@ func link(n1 *TxNode, n2 *TxNode) {
 		n1.next = n2
 	}
 	if n2 != nil {
-		n2.prev = n1
+		n2.setPrev(n1)
 	}
 }

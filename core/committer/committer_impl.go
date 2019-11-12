@@ -10,6 +10,7 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
@@ -29,7 +30,7 @@ type PeerLedgerSupport interface {
 
 	GetPvtDataByNum(blockNum uint64, filter ledger.PvtNsCollFilter) ([]*ledger.TxPvtData, error)
 
-	CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
+	CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData, committedTxs chan<- *dependency.Transaction) error
 
 	CommitPvtDataOfOldBlocks(blockPvtData []*ledger.BlockPvtData) ([]*ledger.PvtdataHashMismatch, error)
 
@@ -83,7 +84,7 @@ func (lc *LedgerCommitter) preCommit(block *cached.Block) error {
 }
 
 // CommitWithPvtData commits blocks atomically with private data
-func (lc *LedgerCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData) error {
+func (lc *LedgerCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData, committedTxs chan<- *dependency.Transaction) error {
 	// Do validation and whatever needed before
 	// committing new block
 	if err := lc.preCommit(blockAndPvtData.Block); err != nil {
@@ -91,7 +92,8 @@ func (lc *LedgerCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvt
 	}
 
 	// Committing new block
-	if err := lc.PeerLedgerSupport.CommitWithPvtData(blockAndPvtData); err != nil {
+	err := lc.PeerLedgerSupport.CommitWithPvtData(blockAndPvtData, committedTxs)
+	if err != nil {
 		return err
 	}
 

@@ -9,8 +9,6 @@ package kvledger
 import (
 	"bytes"
 	"fmt"
-	"github.com/hyperledger/fabric/fastfabric/cached"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/core/ledger"
@@ -21,6 +19,8 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/core/ledger/ledgerstorage"
+	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
@@ -123,9 +123,18 @@ func (provider *Provider) Create(genesisBlock *common.Block) (ledger.PeerLedger,
 		panicOnErr(provider.idStore.unsetUnderConstructionFlag(), "Error while unsetting under construction flag")
 		return nil, err
 	}
+	committedTxs := make(chan *dependency.Transaction, len(genBlock.Data.Data))
+	a := dependency.NewAnalyzer()
+	defer a.Stop()
+	txs, err := a.Analyze(genBlock)
+	if err != nil {
+		panic(err)
+	}
+
 	if err := lgr.CommitWithPvtData(&ledger.BlockAndPvtData{
-		Block: genBlock,
-	}); err != nil {
+		Block:        genBlock,
+		UnblockedTxs: txs,
+	}, committedTxs); err != nil {
 		lgr.Close()
 		return nil, err
 	}

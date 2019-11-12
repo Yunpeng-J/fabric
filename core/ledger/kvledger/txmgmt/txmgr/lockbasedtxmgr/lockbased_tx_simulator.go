@@ -7,7 +7,6 @@ package lockbasedtxmgr
 
 import (
 	"fmt"
-
 	commonledger "github.com/hyperledger/fabric/common/ledger"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
@@ -34,6 +33,9 @@ func newLockBasedTxSimulator(txmgr *LockBasedTxMgr, txid string) (*lockBasedTxSi
 
 // SetState implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetState(ns string, key string, value []byte) error {
+	if err := checkForOracleNS(ns); err != nil {
+		return err
+	}
 	if err := s.checkWritePrecondition(key, value); err != nil {
 		return err
 	}
@@ -41,13 +43,35 @@ func (s *lockBasedTxSimulator) SetState(ns string, key string, value []byte) err
 	return nil
 }
 
+func checkForOracleNS(ns string) error {
+	if ns == "oracle" {
+		return errors.New("The 'oracle' namespace is protected, please choose a different namespace for your chaincode")
+	}
+	return nil
+}
+
+// SetOracle implements method in interface `ledger.TxSimulator`
+func (s *lockBasedTxSimulator) SetOracle(namespace string, key string, value []byte) error {
+	if err := s.helper.checkDone(); err != nil {
+		return err
+	}
+	s.rwsetBuilder.AddToWriteSet(namespace, "oracle_"+key, value)
+	return nil
+}
+
 // DeleteState implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) DeleteState(ns string, key string) error {
+	if err := checkForOracleNS(ns); err != nil {
+		return err
+	}
 	return s.SetState(ns, key, nil)
 }
 
 // SetStateMultipleKeys implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetStateMultipleKeys(namespace string, kvs map[string][]byte) error {
+	if err := checkForOracleNS(namespace); err != nil {
+		return err
+	}
 	for k, v := range kvs {
 		if err := s.SetState(namespace, k, v); err != nil {
 			return err
@@ -58,6 +82,9 @@ func (s *lockBasedTxSimulator) SetStateMultipleKeys(namespace string, kvs map[st
 
 // SetStateMetadata implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetStateMetadata(namespace, key string, metadata map[string][]byte) error {
+	if err := checkForOracleNS(namespace); err != nil {
+		return err
+	}
 	if err := s.checkWritePrecondition(key, nil); err != nil {
 		return err
 	}
@@ -67,11 +94,17 @@ func (s *lockBasedTxSimulator) SetStateMetadata(namespace, key string, metadata 
 
 // DeleteStateMetadata implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) DeleteStateMetadata(namespace, key string) error {
+	if err := checkForOracleNS(namespace); err != nil {
+		return err
+	}
 	return s.SetStateMetadata(namespace, key, nil)
 }
 
 // SetPrivateData implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetPrivateData(ns, coll, key string, value []byte) error {
+	if err := checkForOracleNS(ns); err != nil {
+		return err
+	}
 	if err := s.helper.validateCollName(ns, coll); err != nil {
 		return err
 	}
@@ -85,11 +118,17 @@ func (s *lockBasedTxSimulator) SetPrivateData(ns, coll, key string, value []byte
 
 // DeletePrivateData implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) DeletePrivateData(ns, coll, key string) error {
+	if err := checkForOracleNS(ns); err != nil {
+		return err
+	}
 	return s.SetPrivateData(ns, coll, key, nil)
 }
 
 // SetPrivateDataMultipleKeys implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetPrivateDataMultipleKeys(ns, coll string, kvs map[string][]byte) error {
+	if err := checkForOracleNS(ns); err != nil {
+		return err
+	}
 	for k, v := range kvs {
 		if err := s.SetPrivateData(ns, coll, k, v); err != nil {
 			return err
@@ -100,6 +139,9 @@ func (s *lockBasedTxSimulator) SetPrivateDataMultipleKeys(ns, coll string, kvs m
 
 // GetPrivateDataRangeScanIterator implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) GetPrivateDataRangeScanIterator(namespace, collection, startKey, endKey string) (commonledger.ResultsIterator, error) {
+	if err := checkForOracleNS(namespace); err != nil {
+		return nil, err
+	}
 	if err := s.checkBeforePvtdataQueries(); err != nil {
 		return nil, err
 	}
@@ -108,6 +150,9 @@ func (s *lockBasedTxSimulator) GetPrivateDataRangeScanIterator(namespace, collec
 
 // SetPrivateDataMetadata implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) SetPrivateDataMetadata(namespace, collection, key string, metadata map[string][]byte) error {
+	if err := checkForOracleNS(namespace); err != nil {
+		return err
+	}
 	if err := s.helper.validateCollName(namespace, collection); err != nil {
 		return err
 	}
@@ -120,11 +165,17 @@ func (s *lockBasedTxSimulator) SetPrivateDataMetadata(namespace, collection, key
 
 // DeletePrivateMetadata implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) DeletePrivateDataMetadata(namespace, collection, key string) error {
+	if err := checkForOracleNS(namespace); err != nil {
+		return err
+	}
 	return s.SetPrivateDataMetadata(namespace, collection, key, nil)
 }
 
 // ExecuteQueryOnPrivateData implements method in interface `ledger.TxSimulator`
 func (s *lockBasedTxSimulator) ExecuteQueryOnPrivateData(namespace, collection, query string) (commonledger.ResultsIterator, error) {
+	if err := checkForOracleNS(namespace); err != nil {
+		return nil, err
+	}
 	if err := s.checkBeforePvtdataQueries(); err != nil {
 		return nil, err
 	}
@@ -133,6 +184,9 @@ func (s *lockBasedTxSimulator) ExecuteQueryOnPrivateData(namespace, collection, 
 
 // GetStateRangeScanIteratorWithMetadata implements method in interface `ledger.QueryExecutor`
 func (s *lockBasedTxSimulator) GetStateRangeScanIteratorWithMetadata(namespace string, startKey string, endKey string, metadata map[string]interface{}) (ledger.QueryResultsIterator, error) {
+	if err := checkForOracleNS(namespace); err != nil {
+		return nil, err
+	}
 	if err := s.checkBeforePaginatedQueries(); err != nil {
 		return nil, err
 	}
@@ -141,6 +195,9 @@ func (s *lockBasedTxSimulator) GetStateRangeScanIteratorWithMetadata(namespace s
 
 // ExecuteQueryWithMetadata implements method in interface `ledger.QueryExecutor`
 func (s *lockBasedTxSimulator) ExecuteQueryWithMetadata(namespace, query string, metadata map[string]interface{}) (ledger.QueryResultsIterator, error) {
+	if err := checkForOracleNS(namespace); err != nil {
+		return nil, err
+	}
 	if err := s.checkBeforePaginatedQueries(); err != nil {
 		return nil, err
 	}

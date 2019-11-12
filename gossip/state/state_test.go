@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"math/rand"
 	"net"
 	"sync"
@@ -126,7 +128,7 @@ func (*cryptoServiceMock) GetPKIidOfCert(peerIdentity api.PeerIdentityType) comm
 
 // VerifyBlock returns nil if the block is properly signed,
 // else returns error
-func (*cryptoServiceMock) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock *pcomm.Block) error {
+func (*cryptoServiceMock) VerifyBlock(chainID common.ChainID, seqNum uint64, signedBlock *cached.Block) error {
 	return nil
 }
 
@@ -225,7 +227,7 @@ func (mc *mockCommitter) GetPvtDataByNum(blockNum uint64, filter ledger.PvtNsCol
 	return args.Get(0).([]*ledger.TxPvtData), args.Error(1)
 }
 
-func (mc *mockCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData) error {
+func (mc *mockCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData, txs chan<- *dependency.Transaction) error {
 	mc.Lock()
 	m := mc.Mock
 	mc.Unlock()
@@ -299,7 +301,7 @@ func (mock *ramLedger) GetPvtDataByNum(blockNum uint64, filter ledger.PvtNsCollF
 	panic("implement me")
 }
 
-func (mock *ramLedger) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error {
+func (mock *ramLedger) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData, committedTxs chan<- *dependency.Transaction) error {
 	mock.Lock()
 	defer mock.Unlock()
 
@@ -345,7 +347,7 @@ func newCommitter() committer.Committer {
 	}
 	ldgr.CommitWithPvtData(&ledger.BlockAndPvtData{
 		Block: cached.WrapBlock(cb),
-	})
+	}, nil)
 	return committer.NewLedgerCommitter(ldgr)
 }
 
@@ -353,6 +355,31 @@ func newPeerNodeWithGossip(id int, committer committer.Committer,
 	acceptor peerIdentityAcceptor, g gossip.Gossip, bootPorts ...int) *peerNode {
 	return newPeerNodeWithGossipWithValidator(id, committer, acceptor, g, &validator.MockValidator{}, bootPorts...)
 }
+
+type mockAnalyzer struct {
+}
+
+func (m *mockAnalyzer) Analyze(block *cached.Block) (<-chan *dependency.Transaction, error) {
+	c := make(chan *dependency.Transaction, len(block.Data.Data))
+	envs, _ := block.UnmarshalAllEnvelopes()
+	for idx, env := range envs {
+		pl, _ := env.UnmarshalPayload()
+		c <- &dependency.Transaction{
+			Version: &version.Height{
+				BlockNum: block.Header.Number,
+				TxNum:    uint64(idx),
+			},
+			Payload:        pl,
+			TxID:           "",
+			RwSet:          nil,
+			ValidationCode: 0,
+		}
+	}
+	close(c)
+	return c, nil
+}
+func (m *mockAnalyzer) NotifyAboutCommit(*dependency.Transaction) {}
+func (m *mockAnalyzer) Stop()                                     {}
 
 // Constructing pseudo peer node, simulating only gossip and state transfer part
 func newPeerNodeWithGossipWithValidatorWithMetrics(id int, committer committer.Committer,
@@ -418,6 +445,7 @@ func newPeerNodeWithGossipWithValidatorWithMetrics(id int, committer committer.C
 		Validator:      v,
 		TransientStore: &mockTransientStore{},
 		Committer:      committer,
+		Analyzer:       &mockAnalyzer{},
 	}, pcomm.SignedData{}, gossipMetrics.PrivdataMetrics, coordConfig)
 	sp := NewGossipStateProvider(util.GetTestChainID(), servicesAdapater, coord, gossipMetrics.StateMetrics, conf)
 	if sp == nil {
@@ -513,9 +541,7 @@ func TestAddPayloadLedgerUnavailable(t *testing.T) {
 	mc.Unlock()
 
 	rawblock := pcomm.NewBlock(uint64(1), []byte{})
-	err := p.s.AddPayload(&proto.Payload{
-		Data: rawblock,
-	})
+	err := p.s.AddPayload(&cached.GossipPayload{Data: cached.WrapBlock(rawblock)})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Failed obtaining ledger height")
 	assert.Contains(t, err.Error(), "cannot query ledger")
@@ -611,8 +637,8 @@ func TestOverPopulation(t *testing.T) {
 	// Add some blocks in a sequential manner and make sure it works
 	for i := 1; i <= 4; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
-		assert.NoError(t, p.s.addPayload(&proto.Payload{
-			Data: rawblock,
+		assert.NoError(t, p.s.addPayload(&cached.GossipPayload{
+			Data: cached.WrapBlock(rawblock),
 		}, NonBlocking))
 	}
 
@@ -620,8 +646,8 @@ func TestOverPopulation(t *testing.T) {
 	// Should succeed
 	for i := 10; i <= DefMaxBlockDistance; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
-		assert.NoError(t, p.s.addPayload(&proto.Payload{
-			Data: rawblock,
+		assert.NoError(t, p.s.addPayload(&cached.GossipPayload{
+			Data: cached.WrapBlock(rawblock),
 		}, NonBlocking))
 	}
 
@@ -629,8 +655,8 @@ func TestOverPopulation(t *testing.T) {
 	// Should fail.
 	for i := DefMaxBlockDistance + 1; i <= DefMaxBlockDistance*10; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
-		assert.Error(t, p.s.addPayload(&proto.Payload{
-			Data: rawblock,
+		assert.Error(t, p.s.addPayload(&cached.GossipPayload{
+			Data: cached.WrapBlock(rawblock),
 		}, NonBlocking))
 	}
 
@@ -671,8 +697,8 @@ func TestBlockingEnqueue(t *testing.T) {
 	go func() {
 		for i := 1; i <= numBlocksReceived; i++ {
 			rawblock := pcomm.NewBlock(uint64(i), []byte{})
-			block := &proto.Payload{
-				Data: rawblock,
+			block := &cached.GossipPayload{
+				Data: cached.WrapBlock(rawblock),
 			}
 			p.s.AddPayload(block)
 			time.Sleep(time.Millisecond)
@@ -685,8 +711,8 @@ func TestBlockingEnqueue(t *testing.T) {
 		for i := 1; i <= numBlocksReceived/2; i++ {
 			blockSeq := rand.Intn(numBlocksReceived)
 			rawblock := pcomm.NewBlock(uint64(blockSeq), []byte{})
-			block := &proto.Payload{
-				Data: rawblock,
+			block := &cached.GossipPayload{
+				Data: cached.WrapBlock(rawblock),
 			}
 			p.s.addPayload(block, NonBlocking)
 			time.Sleep(time.Millisecond)
@@ -991,8 +1017,8 @@ func TestAccessControl(t *testing.T) {
 	for i := 1; i <= msgCount; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
 		if _, err := pb.Marshal(rawblock); err == nil {
-			payload := &proto.Payload{
-				Data: rawblock,
+			payload := &cached.GossipPayload{
+				Data: cached.WrapBlock(rawblock),
 			}
 			bootstrapSet[0].s.AddPayload(payload)
 		} else {
@@ -1071,8 +1097,8 @@ func TestNewGossipStateProvider_SendingManyMessages(t *testing.T) {
 	for i := 1; i <= msgCount; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
 		if _, err := pb.Marshal(rawblock); err == nil {
-			payload := &proto.Payload{
-				Data: rawblock,
+			payload := &cached.GossipPayload{
+				Data: cached.WrapBlock(rawblock),
 			}
 			bootstrapSet[0].s.AddPayload(payload)
 		} else {
@@ -1199,8 +1225,8 @@ func TestNewGossipStateProvider_BatchingOfStateRequest(t *testing.T) {
 	for i := 1; i <= msgCount; i++ {
 		rawblock := pcomm.NewBlock(uint64(i), []byte{})
 		if _, err := pb.Marshal(rawblock); err == nil {
-			payload := &proto.Payload{
-				Data: rawblock,
+			payload := &cached.GossipPayload{
+				Data: cached.WrapBlock(rawblock),
 			}
 			bootPeer.s.AddPayload(payload)
 		} else {
@@ -1294,9 +1320,11 @@ func (mock *coordinatorMock) GetBlockByNum(seqNum uint64) (*pcomm.Block, error) 
 	return args.Get(0).(*pcomm.Block), args.Error(1)
 }
 
-func (mock *coordinatorMock) StoreBlock(block *cached.Block, data gutil.PvtDataCollections) error {
+func (mock *coordinatorMock) StoreBlock(block *cached.Block, data gutil.PvtDataCollections) chan error {
 	args := mock.Called(block, data)
-	return args.Error(1)
+	ec := make(chan error, 1)
+	ec <- args.Error(1)
+	return ec
 }
 
 func (mock *coordinatorMock) LedgerHeight() (uint64, error) {

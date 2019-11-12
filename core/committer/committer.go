@@ -18,6 +18,7 @@ package committer
 
 import (
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"github.com/hyperledger/fabric/protos/common"
 )
 
@@ -31,7 +32,7 @@ import (
 type Committer interface {
 
 	// CommitWithPvtData block and private data into the ledger
-	CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData) error
+	CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvtData, committedTxs chan<- *dependency.Transaction) error
 
 	// GetPvtDataAndBlockByNum retrieves block with private data with given
 	// sequence number

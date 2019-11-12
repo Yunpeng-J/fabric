@@ -8,6 +8,7 @@ package service
 
 import (
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"sync"
 
 	"github.com/hyperledger/fabric/common/metrics"
@@ -214,6 +215,7 @@ type Support struct {
 	Store                privdata2.TransientStore
 	Cs                   privdata.CollectionStore
 	IdDeserializeFactory privdata2.IdentityDeserializerFactory
+	Analyzer             dependency.Analyzer
 }
 
 // DataStoreSupport aggregates interfaces capable
@@ -254,6 +256,7 @@ func (g *gossipServiceImpl) InitializeChannel(chainID string, endpoints []string
 		Validator:       support.Validator,
 		TransientStore:  support.Store,
 		Committer:       support.Committer,
+		Analyzer:        support.Analyzer,
 		Fetcher:         fetcher,
 	}, g.createSelfSignedData(), g.metrics.PrivdataMetrics, coordinatorConfig)
 

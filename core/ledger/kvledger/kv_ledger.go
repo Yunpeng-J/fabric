@@ -8,6 +8,7 @@ package kvledger
 
 import (
 	"github.com/hyperledger/fabric/fastfabric/config"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	ffgossip "github.com/hyperledger/fabric/fastfabric/gossip"
 	"github.com/hyperledger/fabric/protos/gossip"
 	"sync"
@@ -295,14 +296,14 @@ func (l *kvLedger) NewHistoryQueryExecutor() (ledger.HistoryQueryExecutor, error
 }
 
 // CommitWithPvtData commits the block and the corresponding pvt data in an atomic operation
-func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) error {
+func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData, committedTxs chan<- *dependency.Transaction) error {
 	var err error
 	block := pvtdataAndBlock.Block
 	blockNo := pvtdataAndBlock.Block.Header.Number
 
 	startBlockProcessing := time.Now()
 	logger.Debugf("[%s] Validating state for block [%d]", l.ledgerID, blockNo)
-	txstatsInfo, err := l.txtmgmt.ValidateAndPrepare(pvtdataAndBlock, true)
+	txstatsInfo, err := l.txtmgmt.ValidateAndPrepare(pvtdataAndBlock, true, committedTxs)
 	if err != nil {
 		return err
 	}
@@ -325,7 +326,7 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 	l.blockAPIsRWLock.Lock()
 	defer l.blockAPIsRWLock.Unlock()
 	if err = l.blockStore.CommitWithPvtData(pvtdataAndBlock); err != nil {
-		return err
+		panic(err)
 	}
 	elapsedCommitBlockStorage := time.Since(startCommitBlockStorage)
 

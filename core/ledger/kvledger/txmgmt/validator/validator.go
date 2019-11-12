@@ -20,11 +20,12 @@ import (
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/txmgr"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 )
 
 // Validator validates the transactions present in a block and returns a batch that should be used to update the state
 type Validator interface {
-	ValidateAndPrepareBatch(blockAndPvtdata *ledger.BlockAndPvtData, doMVCCValidation bool) (
+	ValidateAndPrepareBatch(blockAndPvtdata *ledger.BlockAndPvtData, doMVCCValidation bool, committedTxs chan<- *dependency.Transaction) (
 		*privacyenabledstate.UpdateBatch, []*txmgr.TxStatInfo, error,
 	)
 }

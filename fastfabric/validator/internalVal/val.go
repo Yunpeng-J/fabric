@@ -4,14 +4,14 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package internal
+package internalVal
 
 import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/fastfabric/cached"
-	"github.com/hyperledger/fabric/fastfabric/validator/internalVal"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"github.com/hyperledger/fabric/protos/peer"
 )
 
@@ -20,14 +20,14 @@ var logger = flogging.MustGetLogger("valinternal")
 // Validator is supposed to validate the transactions based on public data and hashes present in a block
 // and returns a batch that should be used to update the state
 type Validator interface {
-	ValidateAndPrepareBatch(block *internalVal.Block, doMVCCValidation bool) (*PubAndHashUpdates, error)
+	ValidateAndPrepareBatch(block *Block, doMVCCValidation bool, committedTxs chan<- *dependency.Transaction) (*PubAndHashUpdates, error)
 }
 
 // Block is used to used to hold the information from its proto format to a structure
 // that is more suitable/friendly for validation
 type Block struct {
 	Num uint64
-	Txs <-chan *Transaction
+	Txs <-chan *dependency.Transaction
 }
 
 // Transaction is used to hold the information from its proto format to a structure

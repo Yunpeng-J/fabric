@@ -341,6 +341,8 @@ type ChaincodeStubInterface interface {
 	// available within the transaction in the committed block regardless of the
 	// validity of the transaction.
 	SetEvent(name string, payload []byte) error
+
+	PutOracle(key string, value []byte) error
 }
 
 // CommonIteratorInterface allows a chaincode to check whether any more result

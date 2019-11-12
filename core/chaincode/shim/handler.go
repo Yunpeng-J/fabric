@@ -400,6 +400,36 @@ func (handler *Handler) handlePutState(collection string, key string, value []by
 	return errors.Errorf("[%s] incorrect chaincode message %s received. Expecting %s or %s", shorttxid(responseMsg.Txid), responseMsg.Type, pb.ChaincodeMessage_RESPONSE, pb.ChaincodeMessage_ERROR)
 }
 
+func (handler *Handler) handlePutOracle(key string, value []byte, channelId string, txid string) error {
+	// Construct payload for PUT_STATE
+	payloadBytes, _ := proto.Marshal(&pb.PutState{Key: key, Value: value})
+
+	msg := &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_PUT_ORACLE, Payload: payloadBytes, Txid: txid, ChannelId: channelId}
+	chaincodeLogger.Debugf("[%s] Sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_PUT_ORACLE)
+
+	// Execute the request and get response
+	responseMsg, err := handler.callPeerWithChaincodeMsg(msg, channelId, txid)
+	if err != nil {
+		return errors.WithMessage(err, fmt.Sprintf("[%s] error sending PUT_STATE", msg.Txid))
+	}
+
+	if responseMsg.Type.String() == pb.ChaincodeMessage_RESPONSE.String() {
+		// Success response
+		chaincodeLogger.Debugf("[%s] Received %s. Successfully updated state", shorttxid(responseMsg.Txid), pb.ChaincodeMessage_RESPONSE)
+		return nil
+	}
+
+	if responseMsg.Type.String() == pb.ChaincodeMessage_ERROR.String() {
+		// Error response
+		chaincodeLogger.Errorf("[%s] Received %s. Payload: %s", shorttxid(responseMsg.Txid), pb.ChaincodeMessage_ERROR, responseMsg.Payload)
+		return errors.New(string(responseMsg.Payload[:]))
+	}
+
+	// Incorrect chaincode message received
+	chaincodeLogger.Errorf("[%s] Incorrect chaincode message %s received. Expecting %s or %s", shorttxid(responseMsg.Txid), responseMsg.Type, pb.ChaincodeMessage_RESPONSE, pb.ChaincodeMessage_ERROR)
+	return errors.Errorf("[%s] incorrect chaincode message %s received. Expecting %s or %s", shorttxid(responseMsg.Txid), responseMsg.Type, pb.ChaincodeMessage_RESPONSE, pb.ChaincodeMessage_ERROR)
+}
+
 func (handler *Handler) handlePutStateMetadataEntry(collection string, key string, metakey string, metadata []byte, channelID string, txID string) error {
 	// Construct payload for PUT_STATE_METADATA
 	md := &pb.StateMetadata{Metakey: metakey, Value: metadata}

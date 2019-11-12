@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/fastfabric/config"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -71,7 +72,7 @@ type TransientStore interface {
 type Coordinator interface {
 	// StoreBlock deliver new block with underlined private data
 	// returns missing transaction ids
-	StoreBlock(block *cached.Block, data util.PvtDataCollections) error
+	StoreBlock(block *cached.Block, data util.PvtDataCollections) chan error
 
 	// StorePvtData used to persist private data into transient store
 	StorePvtData(txid string, privData *transientstore2.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
@@ -112,6 +113,7 @@ type Support struct {
 	privdata.CollectionStore
 	txvalidator.Validator
 	committer.Committer
+	dependency.Analyzer
 	TransientStore
 	Fetcher
 }
@@ -137,137 +139,195 @@ func NewCoordinator(support Support, selfSignedData common.SignedData, metrics *
 		pullRetryThreshold: config.PullRetryThreshold}
 }
 
+func (c *coordinator) Close() {
+	c.Analyzer.Stop()
+	c.Committer.Close()
+}
+
 // StorePvtData used to persist private date into transient store
 func (c *coordinator) StorePvtData(txID string, privData *transientstore2.TxPvtReadWriteSetWithConfigInfo, blkHeight uint64) error {
 	return c.TransientStore.PersistWithConfig(txID, blkHeight, privData)
 }
 
 // StoreBlock stores block with private data into the ledger
-func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDataCollections) error {
+func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDataCollections) chan error {
+	errOut := make(chan error, 1)
 	if block.Data == nil {
-		return errors.New("Block data is empty")
+		errOut <- errors.New("Block data is empty")
+		return errOut
 	}
 	if block.Header == nil {
-		return errors.New("Block header is nil")
+		errOut <- errors.New("Block header is nil")
+		return errOut
 	}
+
+	errAnalyze := make(chan error, 1)
+	var unblockedTx <-chan *dependency.Transaction
+	go func() {
+		var err error
+		unblockedTx, err = c.Analyze(block)
+		errAnalyze <- err
+	}()
 
 	logger.Infof("[%s] Received block [%d] from buffer", c.ChainID, block.Header.Number)
 
 	logger.Debugf("[%s] Validating block [%d]", c.ChainID, block.Header.Number)
+	dataOut := make(chan *ledger.BlockAndPvtData, 1)
+	pvtInfoChan := make(chan *privateDataInfo, 1)
+	go func() {
+		if !(config.IsEndorser || config.IsStorage) || block.Header.Number <= 1 {
+			validationStart := time.Now()
+			err := c.Validator.Validate(block)
+			c.reportValidationDuration(time.Since(validationStart))
+			if err != nil {
+				logger.Errorf("Validation failed: %+v", err)
+				errOut <- err
+				return
+			}
+		}
 
-	if !(config.IsEndorser || config.IsStorage) || block.Header.Number <= 1 {
-		validationStart := time.Now()
-		err := c.Validator.Validate(block)
-		c.reportValidationDuration(time.Since(validationStart))
+		blockAndPvtData := &ledger.BlockAndPvtData{
+			Block:          block,
+			PvtData:        make(ledger.TxPvtDataMap),
+			MissingPvtData: make(ledger.TxMissingPvtDataMap),
+		}
+
+		listMissingStart := time.Now()
+		ownedRWsets, err := computeOwnedRWsets(block, privateDataSets)
 		if err != nil {
-			logger.Errorf("Validation failed: %+v", err)
-			return err
+			logger.Warning("Failed computing owned RWSets", err)
+			errOut <- err
+			return
 		}
-	}
 
-	blockAndPvtData := &ledger.BlockAndPvtData{
-		Block:          block,
-		PvtData:        make(ledger.TxPvtDataMap),
-		MissingPvtData: make(ledger.TxMissingPvtDataMap),
-	}
-
-	listMissingStart := time.Now()
-	ownedRWsets, err := computeOwnedRWsets(block, privateDataSets)
-	if err != nil {
-		logger.Warning("Failed computing owned RWSets", err)
-		return err
-	}
-
-	privateInfo, err := c.listMissingPrivateData(block, ownedRWsets)
-	if err != nil {
-		logger.Warning(err)
-		return err
-	}
-
-	c.reportListMissingPrivateDataDuration(time.Since(listMissingStart))
-
-	retryThresh := c.pullRetryThreshold
-	var bFetchFromPeers bool // defaults to false
-	if len(privateInfo.missingKeys) == 0 {
-		logger.Debugf("[%s] No missing collection private write sets to fetch from remote peers", c.ChainID)
-	} else {
-		bFetchFromPeers = true
-		logger.Debugf("[%s] Could not find all collection private write sets in local peer transient store for block [%d].", c.ChainID, block.Header.Number)
-		logger.Debugf("[%s] Fetching %d collection private write sets from remote peers for a maximum duration of %s", c.ChainID, len(privateInfo.missingKeys), retryThresh)
-	}
-	startPull := time.Now()
-	limit := startPull.Add(retryThresh)
-	for len(privateInfo.missingKeys) > 0 && time.Now().Before(limit) {
-		c.fetchFromPeers(block.Header.Number, ownedRWsets, privateInfo)
-		// If succeeded to fetch everything, no need to sleep before
-		// retry
-		if len(privateInfo.missingKeys) == 0 {
-			break
+		privateInfo, err := c.listMissingPrivateData(block, ownedRWsets)
+		if err != nil {
+			logger.Warning(err)
+			errOut <- err
+			return
 		}
-		time.Sleep(pullRetrySleepInterval)
-	}
-	elapsedPull := int64(time.Since(startPull) / time.Millisecond) // duration in ms
 
-	c.reportFetchDuration(time.Since(startPull))
+		c.reportListMissingPrivateDataDuration(time.Since(listMissingStart))
 
-	// Only log results if we actually attempted to fetch
-	if bFetchFromPeers {
+		retryThresh := c.pullRetryThreshold
+		var bFetchFromPeers bool // defaults to false
 		if len(privateInfo.missingKeys) == 0 {
-			logger.Infof("[%s] Fetched all missing collection private write sets from remote peers for block [%d] (%dms)", c.ChainID, block.Header.Number, elapsedPull)
+			logger.Debugf("[%s] No missing collection private write sets to fetch from remote peers", c.ChainID)
 		} else {
-			logger.Warningf("[%s] Could not fetch all missing collection private write sets from remote peers. Will commit block [%d] with missing private write sets:[%v]",
-				c.ChainID, block.Header.Number, privateInfo.missingKeys)
+			bFetchFromPeers = true
+			logger.Debugf("[%s] Could not find all collection private write sets in local peer transient store for block [%d].", c.ChainID, block.Header.Number)
+			logger.Debugf("[%s] Fetching %d collection private write sets from remote peers for a maximum duration of %s", c.ChainID, len(privateInfo.missingKeys), retryThresh)
 		}
-	}
-
-	// populate the private RWSets passed to the ledger
-	for seqInBlock, nsRWS := range ownedRWsets.bySeqsInBlock() {
-		rwsets := nsRWS.toRWSet()
-		logger.Debugf("[%s] Added %d namespace private write sets for block [%d], tran [%d]", c.ChainID, len(rwsets.NsPvtRwset), block.Header.Number, seqInBlock)
-		blockAndPvtData.PvtData[seqInBlock] = &ledger.TxPvtData{
-			SeqInBlock: seqInBlock,
-			WriteSet:   rwsets,
+		startPull := time.Now()
+		limit := startPull.Add(retryThresh)
+		for len(privateInfo.missingKeys) > 0 && time.Now().Before(limit) {
+			c.fetchFromPeers(block.Header.Number, ownedRWsets, privateInfo)
+			// If succeeded to fetch everything, no need to sleep before
+			// retry
+			if len(privateInfo.missingKeys) == 0 {
+				break
+			}
+			time.Sleep(pullRetrySleepInterval)
 		}
-	}
+		elapsedPull := int64(time.Since(startPull) / time.Millisecond) // duration in ms
 
-	// populate missing RWSets to be passed to the ledger
-	for missingRWS := range privateInfo.missingKeys {
-		blockAndPvtData.MissingPvtData.Add(missingRWS.seqInBlock, missingRWS.namespace, missingRWS.collection, true)
-	}
+		c.reportFetchDuration(time.Since(startPull))
 
-	// populate missing RWSets for ineligible collections to be passed to the ledger
-	for _, missingRWS := range privateInfo.missingRWSButIneligible {
-		blockAndPvtData.MissingPvtData.Add(missingRWS.seqInBlock, missingRWS.namespace, missingRWS.collection, false)
-	}
-
-	// commit block and private data
-	commitStart := time.Now()
-	err = c.CommitWithPvtData(blockAndPvtData)
-	c.reportCommitDuration(time.Since(commitStart))
-	if err != nil {
-		return errors.Wrap(err, "commit failed")
-	}
-
-	purgeStart := time.Now()
-
-	if len(blockAndPvtData.PvtData) > 0 {
-		// Finally, purge all transactions in block - valid or not valid.
-		if err := c.PurgeByTxids(privateInfo.txns); err != nil {
-			logger.Error("Purging transactions", privateInfo.txns, "failed:", err)
+		// Only log results if we actually attempted to fetch
+		if bFetchFromPeers {
+			if len(privateInfo.missingKeys) == 0 {
+				logger.Infof("[%s] Fetched all missing collection private write sets from remote peers for block [%d] (%dms)", c.ChainID, block.Header.Number, elapsedPull)
+			} else {
+				logger.Warningf("[%s] Could not fetch all missing collection private write sets from remote peers. Will commit block [%d] with missing private write sets:[%v]",
+					c.ChainID, block.Header.Number, privateInfo.missingKeys)
+			}
 		}
-	}
 
-	seq := block.Header.Number
-	if seq%c.transientBlockRetention == 0 && seq > c.transientBlockRetention {
-		err := c.PurgeByHeight(seq - c.transientBlockRetention)
+		// populate the private RWSets passed to the ledger
+		for seqInBlock, nsRWS := range ownedRWsets.bySeqsInBlock() {
+			rwsets := nsRWS.toRWSet()
+			logger.Debugf("[%s] Added %d namespace private write sets for block [%d], tran [%d]", c.ChainID, len(rwsets.NsPvtRwset), block.Header.Number, seqInBlock)
+			blockAndPvtData.PvtData[seqInBlock] = &ledger.TxPvtData{
+				SeqInBlock: seqInBlock,
+				WriteSet:   rwsets,
+			}
+		}
+
+		// populate missing RWSets to be passed to the ledger
+		for missingRWS := range privateInfo.missingKeys {
+			blockAndPvtData.MissingPvtData.Add(missingRWS.seqInBlock, missingRWS.namespace, missingRWS.collection, true)
+		}
+
+		// populate missing RWSets for ineligible collections to be passed to the ledger
+		for _, missingRWS := range privateInfo.missingRWSButIneligible {
+			blockAndPvtData.MissingPvtData.Add(missingRWS.seqInBlock, missingRWS.namespace, missingRWS.collection, false)
+		}
+
+		dataOut <- blockAndPvtData
+		pvtInfoChan <- privateInfo
+		errOut <- nil
+	}()
+
+	errReturn := make(chan error, 1)
+	go func() {
+		var blockAndPvtData *ledger.BlockAndPvtData
+		var privateInfo *privateDataInfo
+		err := <-errOut
 		if err != nil {
-			logger.Error("Failed purging data from transient store at block", seq, ":", err)
+			errReturn <- err
+			return
 		}
-	}
+		err = <-errAnalyze
+		if err != nil {
+			errReturn <- err
+			return
+		}
 
-	c.reportPurgeDuration(time.Since(purgeStart))
+		blockAndPvtData = <-dataOut
+		blockAndPvtData.UnblockedTxs = unblockedTx
+		privateInfo = <-pvtInfoChan
+		// commit block and private data
+		commitStart := time.Now()
+		committedTxs := make(chan *dependency.Transaction, len(blockAndPvtData.Block.Data.Data))
+		go func() {
+			for tx := range committedTxs {
+				c.NotifyAboutCommit(tx)
+			}
+			c.reportCommitDuration(time.Since(commitStart))
+			if err != nil {
+				errReturn <- errors.Wrap(err, "commit failed")
+				return
+			}
 
-	return nil
+			purgeStart := time.Now()
+
+			if len(blockAndPvtData.PvtData) > 0 {
+				// Finally, purge all transactions in block - valid or not valid.
+				if err := c.PurgeByTxids(privateInfo.txns); err != nil {
+					logger.Error("Purging transactions", privateInfo.txns, "failed:", err)
+				}
+			}
+
+			seq := block.Header.Number
+			if seq%c.transientBlockRetention == 0 && seq > c.transientBlockRetention {
+				err := c.PurgeByHeight(seq - c.transientBlockRetention)
+				if err != nil {
+					logger.Error("Failed purging data from transient store at block", seq, ":", err)
+				}
+			}
+
+			c.reportPurgeDuration(time.Since(purgeStart))
+			errReturn <- nil
+		}()
+		err = c.CommitWithPvtData(blockAndPvtData, committedTxs)
+		if err != nil {
+			errReturn <- err
+			return
+		}
+
+	}()
+
+	return errReturn
 }
 
 func (c *coordinator) fetchFromPeers(blockSeq uint64, ownedRWsets map[rwSetKey][]byte, privateInfo *privateDataInfo) {

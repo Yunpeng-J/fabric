@@ -109,6 +109,11 @@ func (t *BenchmarkChaincode) transfer(stub shim.ChaincodeStubInterface, args []s
 		return shim.Error(err.Error())
 	}
 
+	err = stub.PutOracle("testkey", []byte("testvalue"))
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
 	return shim.Success(nil)
 }
 

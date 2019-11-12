@@ -253,6 +253,56 @@ func (stub *MockStub) PutState(key string, value []byte) error {
 	return nil
 }
 
+// PutState writes the specified `value` and `key` into the ledger.
+func (stub *MockStub) PutOracle(key string, value []byte) error {
+	if stub.TxID == "" {
+		err := errors.New("cannot PutOracle without a transactions - call stub.MockTransactionStart()?")
+		mockLogger.Errorf("%+v", err)
+		return err
+	}
+
+	// If the value is nil or empty, delete the key
+	if len(value) == 0 {
+		mockLogger.Debug("MockStub", stub.Name, "PutOracle called, but value is nil or empty. Delete ", key)
+		return stub.DelState(key)
+	}
+
+	mockLogger.Debug("MockStub", stub.Name, "Putting", key, value)
+	stub.State[key] = value
+
+	// insert key into ordered list of keys
+	for elem := stub.Keys.Front(); elem != nil; elem = elem.Next() {
+		elemValue := elem.Value.(string)
+		comp := strings.Compare(key, elemValue)
+		mockLogger.Debug("MockStub", stub.Name, "Compared", key, elemValue, " and got ", comp)
+		if comp < 0 {
+			// key < elem, insert it before elem
+			stub.Keys.InsertBefore(key, elem)
+			mockLogger.Debug("MockStub", stub.Name, "Key", key, " inserted before", elem.Value)
+			break
+		} else if comp == 0 {
+			// keys exists, no need to change
+			mockLogger.Debug("MockStub", stub.Name, "Key", key, "already in State")
+			break
+		} else { // comp > 0
+			// key > elem, keep looking unless this is the end of the list
+			if elem.Next() == nil {
+				stub.Keys.PushBack(key)
+				mockLogger.Debug("MockStub", stub.Name, "Key", key, "appended")
+				break
+			}
+		}
+	}
+
+	// special case for empty Keys list
+	if stub.Keys.Len() == 0 {
+		stub.Keys.PushFront(key)
+		mockLogger.Debug("MockStub", stub.Name, "Key", key, "is first element in list")
+	}
+
+	return nil
+}
+
 // DelState removes the specified `key` and its value from the ledger.
 func (stub *MockStub) DelState(key string) error {
 	mockLogger.Debug("MockStub", stub.Name, "Deleting", key, stub.State[key])

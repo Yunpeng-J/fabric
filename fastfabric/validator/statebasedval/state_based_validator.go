@@ -6,15 +6,29 @@ SPDX-License-Identifier: Apache-2.0
 package statebasedval
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/go-python/gpython/repl"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/validator/internal"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/config"
+	"github.com/hyperledger/fabric/fastfabric/dependency"
+	"github.com/hyperledger/fabric/fastfabric/validator/internalVal"
 	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric/protos/peer"
+	"io/ioutil"
+	"strings"
+
+	// import required modules
+	_ "github.com/go-python/gpython/builtin"
+	_ "github.com/go-python/gpython/math"
+	_ "github.com/go-python/gpython/sys"
+	_ "github.com/go-python/gpython/time"
 )
 
 var logger = flogging.MustGetLogger("statebasedval")
@@ -22,18 +36,21 @@ var logger = flogging.MustGetLogger("statebasedval")
 // Validator validates a tx against the latest committed state
 // and preceding valid transactions with in the same block
 type Validator struct {
-	db privacyenabledstate.DB
+	db            privacyenabledstate.DB
+	validatedKeys chan map[string]*version.Height
 }
 
 // NewValidator constructs StateValidator
 func NewValidator(db privacyenabledstate.DB) *Validator {
-	return &Validator{db}
+	validator := &Validator{db, make(chan map[string]*version.Height, 1)}
+	validator.validatedKeys <- make(map[string]*version.Height)
+	return validator
 }
 
 // preLoadCommittedVersionOfRSet loads committed version of all keys in each
 // transaction's read set into a cache.
-func (v *Validator) preLoadCommittedVersionOfRSet(block *internal.Block) error {
-
+func (v *Validator) preLoadCommittedVersionOfRSet(block *internalVal.Block) error {
+	fmt.Println("doing PreLoad")
 	// Collect both public and hashed keys in read sets of all transactions in a given block
 	var pubKeys []*statedb.CompositeKey
 	var hashedKeys []*privacyenabledstate.HashedCompositeKey
@@ -47,9 +64,10 @@ func (v *Validator) preLoadCommittedVersionOfRSet(block *internal.Block) error {
 	hashedKeysMap := make(map[privacyenabledstate.HashedCompositeKey]interface{})
 
 	txs := block.Txs
-	processedTxs := make(chan *internal.Transaction, cap(txs))
+	processedTxs := make(chan *dependency.Transaction, cap(txs))
+	block.Txs = processedTxs
 	for tx := range txs {
-		for _, nsRWSet := range tx.RWSet.NsRwSets {
+		for _, nsRWSet := range tx.RwSet.NsRwSets {
 			for _, kvRead := range nsRWSet.KvRwSet.Reads {
 				compositeKey := statedb.CompositeKey{
 					Namespace: nsRWSet.NameSpace,
@@ -90,7 +108,12 @@ func (v *Validator) preLoadCommittedVersionOfRSet(block *internal.Block) error {
 }
 
 // ValidateAndPrepareBatch implements method in Validator interface
-func (v *Validator) ValidateAndPrepareBatch(block *internal.Block, doMVCCValidation bool) (*internal.PubAndHashUpdates, error) {
+func (v *Validator) ValidateAndPrepareBatch(block *internalVal.Block, doMVCCValidation bool, committedTxs chan<- *dependency.Transaction) (*internalVal.PubAndHashUpdates, error) {
+	defer close(committedTxs)
+
+	fmt.Println("Validator ValidateAndPrepareBatch")
+	fmt.Println("ValidateAndPrepareBatch internalBlock.Txs len after preprocess", len(block.Txs))
+
 	// Check whether statedb implements BulkOptimizable interface. For now,
 	// only CouchDB implements BulkOptimizable to reduce the number of REST
 	// API calls from peer to CouchDB instance.
@@ -101,47 +124,70 @@ func (v *Validator) ValidateAndPrepareBatch(block *internal.Block, doMVCCValidat
 		}
 	}
 
-	updates := internal.NewPubAndHashUpdates()
-	for tx := range block.Txs {
+	fmt.Println("after bulkOptimizable")
+
+	updates := internalVal.NewPubAndHashUpdates()
+	txs := block.Txs
+	processedTxs := make(chan *dependency.Transaction, cap(txs))
+	defer close(processedTxs)
+	block.Txs = processedTxs
+
+	fmt.Println("len and cap of block", len(txs), cap(txs))
+	for tx := range txs {
+		fmt.Println("validating keys in tx", tx.Version)
 		var validationCode peer.TxValidationCode
 		var err error
-		if validationCode, err = v.validateEndorserTX(tx.RWSet, doMVCCValidation, updates); err != nil {
+		if validationCode, err = v.validateEndorserTX(tx, doMVCCValidation, updates); err != nil {
 			return nil, err
 		}
-
+		fmt.Println("got validationCode")
 		tx.ValidationCode = validationCode
 		if validationCode == peer.TxValidationCode_VALID {
-			logger.Debugf("Block [%d] Transaction index [%d] TxId [%s] marked as valid by state validator", block.Num, tx.IndexInBlock, tx.ID)
-			committingTxHeight := version.NewHeight(block.Num, uint64(tx.IndexInBlock))
-			updates.ApplyWriteSet(tx.RWSet, committingTxHeight, v.db)
+			logger.Debugf("Block [%d] Transaction index [%d] TxId [%s] marked as valid by state validator", block.Num, tx.Version.TxNum, tx.TxID)
+			committingTxHeight := version.NewHeight(block.Num, uint64(tx.Version.TxNum))
+			updates.ApplyWriteSet(tx.RwSet, committingTxHeight, v.db)
 		} else {
 			logger.Warningf("Block [%d] Transaction index [%d] TxId [%s] marked as invalid by state validator. Reason code [%s]",
-				block.Num, tx.IndexInBlock, tx.ID, validationCode.String())
+				block.Num, tx.Version.TxNum, tx.TxID, validationCode.String())
 		}
+		processedTxs <- tx
+		committedTxs <- tx
 	}
+	fmt.Println("returning updates")
 	return updates, nil
 }
 
 // validateEndorserTX validates endorser transaction
 func (v *Validator) validateEndorserTX(
-	txRWSet *cached.TxRwSet,
+	tx *dependency.Transaction,
 	doMVCCValidation bool,
-	updates *internal.PubAndHashUpdates) (peer.TxValidationCode, error) {
+	updates *internalVal.PubAndHashUpdates) (peer.TxValidationCode, error) {
 
 	var validationCode = peer.TxValidationCode_VALID
 	var err error
 	//mvccvalidation, may invalidate transaction
 	if doMVCCValidation {
-		validationCode, err = v.validateTx(txRWSet, updates)
+		validationCode, err = v.validateTx(tx, updates)
 	}
-	return validationCode, err
+	if err != nil {
+		return peer.TxValidationCode(-1), err
+	}
+	if validationCode == peer.TxValidationCode_MVCC_READ_CONFLICT && tx.Version.BlockNum > 2 {
+		validationCode = v.reExecute(tx, updates)
+	}
+
+	return validationCode, nil
 }
 
-func (v *Validator) validateTx(txRWSet *cached.TxRwSet, updates *internal.PubAndHashUpdates) (peer.TxValidationCode, error) {
+func (v *Validator) validateTx(tx *dependency.Transaction, updates *internalVal.PubAndHashUpdates) (peer.TxValidationCode, error) {
 	// Uncomment the following only for local debugging. Don't want to print data in the logs in production
 	//logger.Debugf("validateTx - validating txRWSet: %s", spew.Sdump(txRWSet))
-	for _, nsRWSet := range txRWSet.NsRwSets {
+
+	fmt.Println("validateTx", tx.RwSet)
+	for _, nsRWSet := range tx.RwSet.NsRwSets {
 		ns := nsRWSet.NameSpace
+
+		fmt.Println("before validateReadSet")
 		// Validate public reads
 		if valid, err := v.validateReadSet(ns, nsRWSet.KvRwSet.Reads, updates.PubUpdates); !valid || err != nil {
 			if err != nil {
@@ -164,7 +210,22 @@ func (v *Validator) validateTx(txRWSet *cached.TxRwSet, updates *internal.PubAnd
 			return peer.TxValidationCode_MVCC_READ_CONFLICT, nil
 		}
 	}
+	fmt.Println("before rememberWrites")
+	v.rememberWrites(tx.RwSet, tx.Version)
+	fmt.Println("after rememberWrites")
+
 	return peer.TxValidationCode_VALID, nil
+}
+
+func (v *Validator) rememberWrites(rwset *cached.TxRwSet, txVersion *version.Height) {
+	for _, set := range rwset.NsRwSets {
+		validatedKeys := <-v.validatedKeys
+		for _, write := range set.KvRwSet.Writes {
+
+			validatedKeys[set.NameSpace+"_"+write.Key] = txVersion
+		}
+		v.validatedKeys <- validatedKeys
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -183,9 +244,12 @@ func (v *Validator) validateReadSet(ns string, kvReads []*kvrwset.KVRead, update
 // i.e., it checks whether a key/version combination is already updated in the statedb (by an already committed block)
 // or in the updates (by a preceding valid transaction in the current block)
 func (v *Validator) validateKVRead(ns string, kvRead *kvrwset.KVRead, updates *privacyenabledstate.PubUpdateBatch) (bool, error) {
+	fmt.Println("validateKVRead")
 	if updates.Exists(ns, kvRead.Key) {
+		fmt.Println("conflict in updates")
 		return false, nil
 	}
+
 	committedVersion, err := v.db.GetVersion(ns, kvRead.Key)
 	if err != nil {
 		return false, err
@@ -198,6 +262,23 @@ func (v *Validator) validateKVRead(ns string, kvRead *kvrwset.KVRead, updates *p
 			ns, kvRead.Key, committedVersion, kvRead.Version)
 		return false, nil
 	}
+
+	validatedKeys := <-v.validatedKeys
+	if ver, ok := validatedKeys[ns+"_"+kvRead.Key]; ok {
+		if ver.Compare(committedVersion) <= 1 {
+			delete(validatedKeys, ns+"_"+kvRead.Key)
+			v.validatedKeys <- validatedKeys
+			fmt.Println("removing committed key from buffer")
+			return true, nil
+		}
+		if !version.AreSame(ver, rwsetutil.NewVersion(kvRead.Version)) {
+			fmt.Println("conflict in validated keys")
+			v.validatedKeys <- validatedKeys
+			return false, nil
+		}
+	}
+	v.validatedKeys <- validatedKeys
+
 	return true, nil
 }
 
@@ -285,4 +366,167 @@ func (v *Validator) validateKVReadHash(ns, coll string, kvReadHash *kvrwset.KVRe
 		return false, nil
 	}
 	return true, nil
+}
+
+type mockUI struct {
+	output string
+}
+
+func (mockUI) SetPrompt(string) {
+}
+
+func (m *mockUI) Print(s string) {
+	m.output = s
+}
+
+func (v *Validator) reExecute(tx *dependency.Transaction, updates *internalVal.PubAndHashUpdates) peer.TxValidationCode {
+	valCode := executeChaincode("../chaincode/contract.py", tx, updates, v.db)
+	if valCode == peer.TxValidationCode_VALID {
+		v.rememberWrites(tx.RwSet, tx.Version)
+	}
+	return valCode
+}
+
+func executeChaincode(contract string, transaction *dependency.Transaction, updates *internalVal.PubAndHashUpdates, db privacyenabledstate.DB) peer.TxValidationCode {
+	r := repl.New()
+	ui := &mockUI{}
+	r.SetUI(ui)
+
+	data, err := ioutil.ReadFile(contract)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	rwset := prepareRwSet(transaction.RwSet, updates, db)
+	benchmark := rwset[0]["benchmark"]
+	delete(rwset[0], "benchmark")
+	args := getArgs(transaction.Payload)
+
+	code := string(data)
+	r.Run(code)
+	pyRwSet := pythonifyRwSet(rwset)
+	pyArgs := pythonifySlice(args)
+	fmt.Println("rwset:", pyRwSet)
+	fmt.Println("args:", pyArgs)
+	call := "execute(" + pyRwSet + "," + pyArgs + ")"
+	r.RunWithGas(call, config.Gas)
+	if r.OutOfGas {
+		return peer.TxValidationCode_INVALID_OTHER_REASON
+	}
+
+	fmt.Println(ui.output)
+	newSet := toRwSetObject(ui.output)
+	newSet[0]["benchmark"] = benchmark
+	fmt.Println("output", newSet)
+	if err := compareAndUpdate(transaction, newSet); err != nil {
+		fmt.Println("invalid:", err)
+		return peer.TxValidationCode_BAD_RWSET
+	}
+	fmt.Println("valid")
+	return peer.TxValidationCode_VALID
+}
+
+func pythonifySlice(args [][]byte) string {
+	sb := strings.Builder{}
+	sb.WriteString("[")
+	for i := 0; i < len(args); i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("\"")
+		sb.Write(args[i])
+		sb.WriteString("\"")
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+func getArgs(payload *cached.Payload) [][]byte {
+	tx, _ := payload.UnmarshalTransaction()
+	cca, _ := tx.Actions[0].UnmarshalChaincodeActionPayload()
+	ppl, _ := cca.UnmarshalProposalPayload()
+	input, _ := ppl.UnmarshalInput()
+	return input.ChaincodeSpec.Input.Args
+}
+
+func prepareRwSet(set *cached.TxRwSet, updates *internalVal.PubAndHashUpdates, db privacyenabledstate.DB) []map[string]interface{} {
+	newSet := make([]map[string]interface{}, 3, 3)
+	for i := 0; i < 3; i++ {
+		newSet[i] = make(map[string]interface{})
+	}
+	for _, ns := range set.NsRwSets {
+		for _, r := range ns.KvRwSet.Reads {
+			val := updates.PubUpdates.Get(ns.NameSpace, r.Key)
+			if val == nil {
+				var err error
+				val, err = db.GetState(ns.NameSpace, r.Key)
+				if err != nil {
+					panic(err)
+				}
+			}
+			newSet[0][r.Key] = string(val.Value)
+		}
+		for _, w := range ns.KvRwSet.Writes {
+			if !strings.HasPrefix(w.Key, "oracle_") {
+				newSet[1][w.Key] = string(w.Value)
+			} else {
+				newSet[2][strings.TrimPrefix(w.Key, "oracle_")] = string(w.Value)
+			}
+		}
+	}
+	return newSet
+}
+
+func pythonifyRwSet(set []map[string]interface{}) string {
+	s, _ := json.Marshal(set)
+	return string(s)
+}
+
+func toRwSetObject(s string) []map[string]interface{} {
+	var set []map[string]interface{}
+	s = strings.Replace(s, "'", "\"", -1)
+	json.Unmarshal([]byte(s), &set)
+	return set
+}
+
+func compareAndUpdate(transaction *dependency.Transaction, newSet []map[string]interface{}) error {
+	set := transaction.RwSet
+	readCount := 0
+	writeCount := 0
+	oracleCount := 0
+	hasError := false
+	for _, ns := range set.NsRwSets {
+		for _, r := range ns.KvRwSet.Reads {
+			readCount++
+			if _, ok := newSet[0][r.Key]; !ok {
+				fmt.Println("compareAndUpdate 0 error on:", r.Key)
+				hasError = true
+				break
+			}
+
+		}
+		for _, w := range ns.KvRwSet.Writes {
+			if !strings.HasPrefix(w.Key, "oracle_") {
+				writeCount++
+				if _, ok := newSet[1][w.Key]; !ok {
+					fmt.Println("compareAndUpdate 1 error on:", w.Key)
+					hasError = true
+					break
+				} else {
+					w.Value = []byte(newSet[1][w.Key].(string))
+				}
+			} else {
+				oracleCount++
+				if _, ok := newSet[2][strings.TrimPrefix(w.Key, "oracle_")]; !ok {
+					fmt.Println("compareAndUpdate 2 error on:", w.Key)
+					hasError = true
+					break
+				}
+			}
+		}
+	}
+	if hasError {
+		return errors.New("could not update transaction after re-execution")
+	}
+	return nil
 }

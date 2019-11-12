@@ -105,7 +105,7 @@ type MCSAdapter interface {
 type ledgerResources interface {
 	// StoreBlock deliver new block with underlined private data
 	// returns missing transaction ids
-	StoreBlock(block *cached.Block, data util.PvtDataCollections) error
+	StoreBlock(block *cached.Block, data util.PvtDataCollections) chan error
 
 	// StorePvtData used to persist private date into transient store
 	StorePvtData(txid string, privData *transientstore.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
@@ -567,7 +567,7 @@ func (s *GossipStateProviderImpl) queueNewMessage(msg *proto.GossipMessage) {
 
 func (s *GossipStateProviderImpl) deliverPayloads() {
 	defer s.done.Done()
-
+	errChan := make(chan error, 10)
 	for {
 		select {
 		// Wait for notification that next seq has arrived
@@ -587,13 +587,23 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 						continue
 					}
 				}
-				if err := s.commitBlock(block, p); err != nil {
-					if executionErr, isExecutionErr := err.(*vsccErrors.VSCCExecutionFailureError); isExecutionErr {
-						logger.Errorf("Failed executing VSCC due to %v. Aborting chain processing", executionErr)
-						return
+				errIn := s.commitBlock(block, p)
+				go func() {
+					errChan <- <-errIn
+				}()
+
+				select {
+				case err := <-errChan:
+					if err != nil {
+						if executionErr, isExecutionErr := err.(*vsccErrors.VSCCExecutionFailureError); isExecutionErr {
+							logger.Errorf("Failed executing VSCC due to %v. Aborting chain processing", executionErr)
+							return
+						}
+						logger.Panicf("Cannot commit block to the ledger due to %+v", errors.WithStack(err))
 					}
-					logger.Panicf("Cannot commit block to the ledger due to %+v", errors.WithStack(err))
+				default:
 				}
+
 			}
 		case <-s.stopCh:
 			s.stopCh <- struct{}{}
@@ -795,27 +805,33 @@ func (s *GossipStateProviderImpl) addPayload(payload *cached.GossipPayload, bloc
 	return nil
 }
 
-func (s *GossipStateProviderImpl) commitBlock(block *cached.Block, pvtData util.PvtDataCollections) error {
+func (s *GossipStateProviderImpl) commitBlock(block *cached.Block, pvtData util.PvtDataCollections) chan error {
 
 	t1 := time.Now()
 
 	// Commit block with available private transactions
-	if err := s.ledger.StoreBlock(block, pvtData); err != nil {
-		logger.Errorf("Got error while committing(%+v)", errors.WithStack(err))
-		return err
-	}
+	errIn := s.ledger.StoreBlock(block, pvtData)
+	errOut := make(chan error, 1)
+	go func() {
+		err := <-errIn
+		if err != nil {
+			logger.Errorf("Got error while committing(%+v)", errors.WithStack(err))
+			errOut <- err
+			return
+		}
 
-	sinceT1 := time.Since(t1)
-	s.stateMetrics.CommitDuration.With("channel", s.chainID).Observe(sinceT1.Seconds())
+		sinceT1 := time.Since(t1)
+		s.stateMetrics.CommitDuration.With("channel", s.chainID).Observe(sinceT1.Seconds())
 
-	// Update ledger height
-	s.mediator.UpdateLedgerHeight(block.Header.Number+1, common2.ChainID(s.chainID))
-	logger.Debugf("[%s] Committed block [%d] with %d transaction(s)",
-		s.chainID, block.Header.Number, len(block.Data.Data))
+		// Update ledger height
+		s.mediator.UpdateLedgerHeight(block.Header.Number+1, common2.ChainID(s.chainID))
+		logger.Debugf("[%s] Committed block [%d] with %d transaction(s)",
+			s.chainID, block.Header.Number, len(block.Data.Data))
 
-	s.stateMetrics.Height.With("channel", s.chainID).Set(float64(block.Header.Number + 1))
-
-	return nil
+		s.stateMetrics.Height.With("channel", s.chainID).Set(float64(block.Header.Number + 1))
+		errOut <- nil
+	}()
+	return errOut
 }
 
 func min(a uint64, b uint64) uint64 {

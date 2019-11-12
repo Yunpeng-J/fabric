@@ -485,6 +485,14 @@ func (stub *ChaincodeStub) PutState(key string, value []byte) error {
 	return stub.handler.handlePutState(collection, key, value, stub.ChannelId, stub.TxID)
 }
 
+func (stub *ChaincodeStub) PutOracle(key string, value []byte) error {
+	if key == "" {
+		return errors.New("key must not be an empty string")
+	}
+	// Access public data by setting the collection to empty string
+	return stub.handler.handlePutOracle(key, value, stub.ChannelId, stub.TxID)
+}
+
 func (stub *ChaincodeStub) createStateQueryIterator(response *pb.QueryResponse) *StateQueryIterator {
 	return &StateQueryIterator{CommonIterator: &CommonIterator{
 		handler:    stub.handler,
