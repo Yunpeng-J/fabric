@@ -77,8 +77,6 @@ func NewAnalyzer() Analyzer {
 				if blockNum == 0 || a.updateWatermark(blockNum) {
 					a.tryReleaseIdpTxs()
 				}
-
-			default:
 			}
 		}
 	}()
