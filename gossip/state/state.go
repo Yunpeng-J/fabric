@@ -48,7 +48,7 @@ const (
 	DefChannelBufferSize     = 100
 	DefAntiEntropyMaxRetries = 3
 
-	DefMaxBlockDistance = 10000000
+	DefMaxBlockDistance = 100
 
 	Blocking    = true
 	NonBlocking = false
