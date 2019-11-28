@@ -13,16 +13,15 @@ var compositeKeySep = string([]byte{0x00})
 
 type analyzer struct {
 	keyDPs             chan map[string]chan *skipList
-	currentWatermark   chan *version.Height
-	currentBlockLength chan uint64
-	futureKnowledge    chan *blockFlags
-	unblockedTxs       chan map[string]*Transaction
+	currentBlock       chan uint64
+	futureKnowledge    chan map[uint64]bool
 	outputPerBlock     chan map[uint64]chan *Transaction
-	blockedTxsPerBlock chan map[uint64]int
+	blockedTxsPerBlock chan map[uint64]map[string]*Transaction
 	committedTxs       chan *Transaction
 	done               chan bool
 	committingTxs      chan map[string]*Transaction
 	once               sync.Once
+	input              chan uint64
 }
 
 func (a *analyzer) Stop() {
@@ -44,27 +43,21 @@ type Analyzer interface {
 func NewAnalyzer() Analyzer {
 	a := &analyzer{
 		keyDPs:             make(chan map[string]chan *skipList, 1),
-		currentWatermark:   make(chan *version.Height, 1),
-		currentBlockLength: make(chan uint64, 1),
-		futureKnowledge:    make(chan *blockFlags, 1),
-		unblockedTxs:       make(chan map[string]*Transaction, 1),
+		currentBlock:       make(chan uint64, 1),
+		futureKnowledge:    make(chan map[uint64]bool, 1),
 		outputPerBlock:     make(chan map[uint64]chan *Transaction, 1),
 		committedTxs:       make(chan *Transaction, 1000),
 		done:               make(chan bool),
 		committingTxs:      make(chan map[string]*Transaction, 1),
-		blockedTxsPerBlock: make(chan map[uint64]int, 1),
+		blockedTxsPerBlock: make(chan map[uint64]map[string]*Transaction, 1),
+		input:              make(chan uint64, 5),
 	}
 	a.keyDPs <- make(map[string]chan *skipList)
-	a.currentWatermark <- &version.Height{
-		BlockNum: 0,
-		TxNum:    0,
-	}
-	a.currentBlockLength <- 1
-	a.futureKnowledge <- &blockFlags{store: make(map[uint64][]bool)}
-	a.unblockedTxs <- make(map[string]*Transaction)
+	a.currentBlock <- 0
+	a.futureKnowledge <- make(map[uint64]bool)
 	a.outputPerBlock <- make(map[uint64]chan *Transaction)
 	a.committingTxs <- make(map[string]*Transaction)
-	a.blockedTxsPerBlock <- make(map[uint64]int)
+	a.blockedTxsPerBlock <- make(map[uint64]map[string]*Transaction)
 	go func() {
 		for {
 			select {
@@ -74,6 +67,17 @@ func NewAnalyzer() Analyzer {
 				}
 			case committedTx := <-a.committedTxs:
 				a.removeDependencies(committedTx)
+
+			case blockNum := <-a.input:
+				blocks := <-a.blockedTxsPerBlock
+				for _, t := range blocks[blockNum] {
+					a.addDependencies(t)
+				}
+				a.blockedTxsPerBlock <- blocks
+				if blockNum == 0 || a.updateWatermark(blockNum) {
+					a.tryReleaseIdpTxs()
+				}
+
 			default:
 			}
 		}
@@ -88,8 +92,7 @@ func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	var txs []*Transaction
+	txs := map[string]*Transaction{}
 	for txNum, env := range envs {
 		pl, err := env.UnmarshalPayload()
 		if err != nil {
@@ -100,99 +103,66 @@ func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		txs = append(txs, t)
+		txs[t.TxID] = t
 	}
 
-	output := make(chan *Transaction, len(envs))
+	output := make(chan *Transaction, len(txs))
 	opb := <-a.outputPerBlock
 	opb[blockNum] = output
 	a.outputPerBlock <- opb
 	btx := <-a.blockedTxsPerBlock
-	btx[blockNum] = len(txs)
+	btx[blockNum] = txs
 	a.blockedTxsPerBlock <- btx
 
-	for _, t := range txs {
-		go func(t *Transaction) {
-			if t.RwSet != nil {
-				a.addDependencies(t)
-			} else {
-				btx := <-a.blockedTxsPerBlock
-				btx[blockNum] -= 1
-				output <- t
-				if btx[blockNum] == 0 {
-					close(output)
-				}
-				a.blockedTxsPerBlock <- btx
-			}
-
-			if a.updateWatermark(t.Version, uint64(len(envs))) {
-				a.notifyTxs()
-			}
-		}(t)
-	}
-
+	a.input <- blockNum
 	return output, nil
 }
 
 func (a *analyzer) addDependencies(tx *Transaction) {
+	if tx.RwSet == nil {
+		return
+	}
 	for _, set := range tx.RwSet.NsRwSets {
 		for _, w := range set.KvRwSet.Writes {
 			if strings.HasPrefix(w.Key, "oracle_") {
 				continue
 			}
 			compKey := constructCompositeKey(set.NameSpace, w.Key)
-			list := <-a.getDPListForKey(compKey)
+			listChan := a.getDPListForKey(compKey)
+			list := <-listChan
 			list.AddWrite(tx)
-			kdp := <-a.keyDPs
-			kdp[compKey] <- list
-			a.keyDPs <- kdp
+			listChan <- list
 		}
 		for _, r := range set.KvRwSet.Reads {
 			compKey := constructCompositeKey(set.NameSpace, r.Key)
-			list := <-a.getDPListForKey(compKey)
+			listChan := a.getDPListForKey(compKey)
+			list := <-listChan
 			list.AddRead(tx)
-			kdp := <-a.keyDPs
-			kdp[compKey] <- list
-			a.keyDPs <- kdp
+			listChan <- list
 		}
 	}
-	a.tryToUnblock(tx)
 }
 
-func (a *analyzer) tryToUnblock(tx *Transaction) {
-	if len(tx.dependencies) > 0 {
-		ut := <-a.unblockedTxs
-		delete(ut, tx.TxID)
-		a.unblockedTxs <- ut
-		return
-	}
-	wm := <-a.currentWatermark
-	defer func() { a.currentWatermark <- wm }()
-
-	if wm == nil || wm.Compare(tx.Version) < 0 {
-		ut := <-a.unblockedTxs
-		ut[tx.TxID] = tx
-		a.unblockedTxs <- ut
-		return
-	}
-
-	ut := <-a.unblockedTxs
-	delete(ut, tx.TxID)
-	a.unblockedTxs <- ut
+func (a *analyzer) release(tx *Transaction) {
 	ctx := <-a.committingTxs
 	if _, ok := ctx[tx.TxID]; !ok {
 		ctx[tx.TxID] = tx
+		a.committingTxs <- ctx
+
 		opb := <-a.outputPerBlock
 		opb[tx.Version.BlockNum] <- tx
 		btx := <-a.blockedTxsPerBlock
-		btx[tx.Version.BlockNum] -= 1
-		if btx[tx.Version.BlockNum] == 0 {
+		delete(btx[tx.Version.BlockNum], tx.TxID)
+		//fmt.Printf("Tx left in block [%d]: %d\n", tx.Version.BlockNum, btx[tx.Version.BlockNum] )
+		if len(btx[tx.Version.BlockNum]) == 0 {
+			delete(btx, tx.Version.BlockNum)
 			close(opb[tx.Version.BlockNum])
 		}
 		a.blockedTxsPerBlock <- btx
 		a.outputPerBlock <- opb
+	} else {
+		a.committingTxs <- ctx
 	}
-	a.committingTxs <- ctx
 }
 
 func (a *analyzer) getDPListForKey(compKey string) chan *skipList {
@@ -213,104 +183,113 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 		return
 	}
 	for _, set := range tx.RwSet.NsRwSets {
-
 		for _, w := range set.KvRwSet.Writes {
 			compKey := constructCompositeKey(set.NameSpace, w.Key)
-			kdp := <-a.keyDPs
-			listChan, ok := kdp[compKey]
-			a.keyDPs <- kdp
-			if ok {
-				list := <-listChan
-				list.Delete(tx.TxID)
-				first := list.First()
-				if first != nil {
-					for _, element := range first.elements {
-						a.tryToUnblock(element.Transaction)
-					}
+			listChan := a.getDPListForKey(compKey)
+			list := <-listChan
+			list.Delete(tx.TxID)
+			first := list.First()
+			listChan <- list
+			if first != nil {
+				for _, el := range first.elements {
+					a.tryRelease(el.Transaction)
 				}
-				kdp[compKey] <- list
 			}
 		}
 		for _, r := range set.KvRwSet.Reads {
 			compKey := constructCompositeKey(set.NameSpace, r.Key)
-			kdp := <-a.keyDPs
-			list, ok := <-kdp[compKey]
-			a.keyDPs <- kdp
-			if ok {
-				list.Delete(tx.TxID)
-				first := list.First()
-				if first != nil {
-					for _, element := range first.elements {
-						a.tryToUnblock(element.Transaction)
-					}
+			listChan := a.getDPListForKey(compKey)
+			list := <-listChan
+			list.Delete(tx.TxID)
+			first := list.First()
+			listChan <- list
+			if first != nil {
+				for _, el := range first.elements {
+					a.tryRelease(el.Transaction)
 				}
-				kdp[compKey] <- list
 			}
 		}
 	}
 }
 
-func (a *analyzer) updateWatermark(newtxHeight *version.Height, txBlockLen uint64) (changed bool) {
-	cwm := <-a.currentWatermark
-	cbl := <-a.currentBlockLength
+func (a *analyzer) updateWatermark(analyzedBlockNum uint64) (changed bool) {
+	cbl := <-a.currentBlock
+	originlCbl := cbl
 	defer func() {
-		a.currentWatermark <- cwm
-		a.currentBlockLength <- cbl
+		a.currentBlock <- cbl
 	}()
-	if cwm == nil {
-		cwm = newtxHeight
-		cbl = txBlockLen
-		return true
-	}
-
-	isNextTxInSameBlock :=
-		cwm.BlockNum == newtxHeight.BlockNum &&
-			cwm.TxNum+1 == newtxHeight.TxNum
-
-	isNextTxAftercompletedBlock :=
-		cwm.BlockNum+1 == newtxHeight.BlockNum &&
-			newtxHeight.TxNum == 0 &&
-			cwm.TxNum+1 == cbl
 
 	fk := <-a.futureKnowledge
 	defer func() { a.futureKnowledge <- fk }()
-	if isNextTxInSameBlock || isNextTxAftercompletedBlock {
-		cwm = newtxHeight
-		cbl = txBlockLen
 
-		futureWatermark := *cwm
-
-		if futureWatermark.TxNum+1 == cbl {
-			futureWatermark.BlockNum += 1
-			futureWatermark.TxNum = 0
-		} else {
-			futureWatermark.TxNum += 1
-		}
-
-		newWM, newBL := fk.popContinuousEntriesStartingWith(futureWatermark)
-		if newWM != nil {
-			cwm = newWM
-			cbl = newBL
-		}
-		return true
+	if analyzedBlockNum == cbl+1 {
+		cbl += 1
+	} else {
+		fk[analyzedBlockNum] = true
 	}
-	fk.add(newtxHeight, txBlockLen)
-	return false
+
+	for i := cbl + 1; fk[i]; i++ {
+		cbl += 1
+		delete(fk, i)
+	}
+
+	return cbl != originlCbl
 }
 
-func (a *analyzer) notifyTxs() {
-	utx := <-a.unblockedTxs
-	a.unblockedTxs <- utx
-	for _, tx := range utx {
-		a.tryToUnblock(tx)
+func (a *analyzer) tryReleaseIdpTxs() {
+	cbl := <-a.currentBlock
+	blocked := <-a.blockedTxsPerBlock
+	for blockNum, txs := range blocked {
+		if blockNum > cbl {
+			continue
+		}
+
+		for txID, tx := range txs {
+			deps := <-tx.dependencies
+			depCount := len(deps)
+			tx.dependencies <- deps
+			if depCount != 0 {
+				continue
+			}
+
+			ctx := <-a.committingTxs
+			if _, ok := ctx[tx.TxID]; !ok {
+				ctx[tx.TxID] = tx
+				a.committingTxs <- ctx
+
+				opb := <-a.outputPerBlock
+				opb[tx.Version.BlockNum] <- tx
+
+				delete(blocked[blockNum], txID)
+				if len(blocked[blockNum]) == 0 {
+					delete(blocked, blockNum)
+					close(opb[tx.Version.BlockNum])
+				}
+
+				a.outputPerBlock <- opb
+			} else {
+				a.committingTxs <- ctx
+			}
+		}
 	}
+
+	a.blockedTxsPerBlock <- blocked
+	a.currentBlock <- cbl
+}
+
+func (a *analyzer) tryRelease(transaction *Transaction) {
+	deps := <-transaction.dependencies
+	if len(deps) == 0 {
+		a.release(transaction)
+	}
+	transaction.dependencies <- deps
 }
 
 type Transaction struct {
 	Version      *version.Height
 	Payload      *cached.Payload
 	TxID         string
-	dependencies map[string]*Transaction
+	dependencies chan map[string]*Transaction
 
 	RwSet          *cached.TxRwSet
 	ValidationCode peer.TxValidationCode
@@ -332,12 +311,14 @@ func NewTransaction(blockNum uint64, txNum uint64, payload *cached.Payload) (*Tr
 	}
 
 	txType := common.HeaderType(chdr.Type)
+	deps := make(chan map[string]*Transaction, 1)
+	deps <- map[string]*Transaction{}
 	if txType != common.HeaderType_ENDORSER_TRANSACTION {
 		return &Transaction{Version: &version.Height{BlockNum: blockNum, TxNum: txNum},
 			TxID:         chdr.TxId,
 			Payload:      payload,
 			RwSet:        nil,
-			dependencies: make(map[string]*Transaction),
+			dependencies: deps,
 		}, nil
 	}
 
@@ -357,20 +338,25 @@ func NewTransaction(blockNum uint64, txNum uint64, payload *cached.Payload) (*Tr
 		TxID:         chdr.TxId,
 		Payload:      payload,
 		RwSet:        rwset,
-		dependencies: make(map[string]*Transaction)}, nil
+		dependencies: deps}, nil
 
 }
 
 func (tx *Transaction) addDependency(other *Transaction) {
-	if _, ok := tx.dependencies[other.TxID]; other == tx || ok {
+	deps := <-tx.dependencies
+	defer func() { tx.dependencies <- deps }()
+
+	if _, ok := deps[other.TxID]; other == tx || ok {
 		return
 	}
 
-	tx.dependencies[other.TxID] = other
+	deps[other.TxID] = other
 }
 
 func (tx *Transaction) removeDependency(other *Transaction) {
-	delete(tx.dependencies, other.TxID)
+	deps := <-tx.dependencies
+	delete(deps, other.TxID)
+	tx.dependencies <- deps
 }
 
 // ContainsPvtWrites returns true if this transaction is not limited to affecting the public data only
@@ -403,53 +389,6 @@ func (t *Transaction) RetrieveHash(ns string, coll string) []byte {
 		}
 	}
 	return nil
-}
-
-type blockFlags struct {
-	store map[uint64][]bool
-}
-
-func (s *blockFlags) add(txHeight *version.Height, blockLen uint64) {
-	if _, ok := s.store[txHeight.BlockNum]; !ok {
-		s.store[txHeight.BlockNum] = make([]bool, blockLen)
-	}
-	s.store[txHeight.BlockNum][txHeight.TxNum] = true
-}
-
-func (s *blockFlags) popContinuousEntriesStartingWith(newHeight version.Height) (height *version.Height, blockLength uint64) {
-	height = nil
-
-	txNum := int(newHeight.TxNum)
-	blockNum := newHeight.BlockNum
-	for ; ; blockNum++ {
-		block, ok := s.store[blockNum]
-		if !ok {
-			break
-		}
-
-		foundNum := -1
-		for ; txNum < len(block); txNum++ {
-			if block[txNum] {
-				foundNum = txNum
-			} else {
-				break
-			}
-		}
-
-		if txNum+1 == len(block) {
-			delete(s.store, blockNum)
-			txNum = 0
-		}
-
-		if foundNum == -1 {
-			break
-		}
-
-		height = &version.Height{BlockNum: blockNum, TxNum: uint64(foundNum)}
-		blockLength = uint64(len(block))
-	}
-
-	return height, blockLength
 }
 
 func constructCompositeKey(ns string, key string) string {

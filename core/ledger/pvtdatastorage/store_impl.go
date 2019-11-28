@@ -8,6 +8,7 @@ package pvtdatastorage
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/statedb"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
@@ -26,11 +26,11 @@ import (
 var logger = flogging.MustGetLogger("pvtdatastorage")
 
 type provider struct {
-	dbProvider *leveldbhelper.Provider
+	dbProvider *statedb.Provider
 }
 
 type store struct {
-	db        *leveldbhelper.DBHandle
+	db        *statedb.DBHandle
 	ledgerid  string
 	btlPolicy pvtdatapolicy.BTLPolicy
 
@@ -108,7 +108,7 @@ type entriesForPvtDataOfOldBlocks struct {
 // NewProvider instantiates a StoreProvider
 func NewProvider() Provider {
 	dbPath := ledgerconfig.GetPvtdataStorePath()
-	dbProvider := leveldbhelper.NewProvider(&leveldbhelper.Conf{DBPath: dbPath})
+	dbProvider := statedb.NewProvider(dbPath)
 	return &provider{dbProvider: dbProvider}
 }
 
@@ -163,6 +163,7 @@ func (s *store) Init(btlPolicy pvtdatapolicy.BTLPolicy) {
 
 // Prepare implements the function in the interface `Store`
 func (s *store) Prepare(blockNum uint64, pvtData []*ledger.TxPvtData, missingPvtData ledger.TxMissingPvtDataMap) error {
+	return nil
 	if s.batchPending {
 		return &ErrIllegalCall{`A pending batch exists as as result of last invoke to "Prepare" call.
 			 Invoke "Commit" or "Rollback" on the pending batch before invoking "Prepare" function`}
@@ -172,7 +173,7 @@ func (s *store) Prepare(blockNum uint64, pvtData []*ledger.TxPvtData, missingPvt
 		return &ErrIllegalArgs{fmt.Sprintf("Expected block number=%d, recived block number=%d", expectedBlockNum, blockNum)}
 	}
 
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	var err error
 	var keyBytes, valBytes []byte
 
@@ -221,7 +222,7 @@ func (s *store) Commit() error {
 	}
 	committingBlockNum := s.nextBlockNum()
 	logger.Debugf("Committing private data for block [%d]", committingBlockNum)
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	batch.Delete(pendingCommitKey)
 	batch.Put(lastCommittedBlkkey, encodeLastCommittedBlockVal(committingBlockNum))
 	if err := s.db.WriteBatch(batch, true); err != nil {
@@ -229,7 +230,10 @@ func (s *store) Commit() error {
 	}
 	s.batchPending = false
 	s.isEmpty = false
-	s.lastCommittedBlock = committingBlockNum
+	if s.lastCommittedBlock < committingBlockNum {
+		s.lastCommittedBlock = committingBlockNum
+	}
+
 	logger.Debugf("Committed private data for block [%d]", committingBlockNum)
 	s.performPurgeIfScheduled(committingBlockNum)
 	return nil
@@ -248,7 +252,7 @@ func (s *store) Rollback() error {
 		return &ErrIllegalCall{"No pending batch to rollback"}
 	}
 	blkNum := s.nextBlockNum()
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	itr := s.db.GetIterator(datakeyRange(blkNum))
 	for itr.Next() {
 		batch.Delete(itr.Key())
@@ -434,8 +438,8 @@ func (updateEntries *entriesForPvtDataOfOldBlocks) updateAndAddMissingDataEntry(
 	updateEntries.missingDataEntries[nsCollBlk] = missingData
 }
 
-func constructUpdateBatchFromUpdateEntries(updateEntries *entriesForPvtDataOfOldBlocks) (*leveldbhelper.UpdateBatch, error) {
-	batch := leveldbhelper.NewUpdateBatch()
+func constructUpdateBatchFromUpdateEntries(updateEntries *entriesForPvtDataOfOldBlocks) (*statedb.UpdateBatch, error) {
+	batch := statedb.NewUpdateBatch()
 
 	// add the following four types of entries to the update batch: (1) new data entries
 	// (i.e., pvtData), (2) updated expiry entries, (3) updated missing data entries, and
@@ -462,7 +466,7 @@ func constructUpdateBatchFromUpdateEntries(updateEntries *entriesForPvtDataOfOld
 	return batch, nil
 }
 
-func addNewDataEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
+func addNewDataEntriesToUpdateBatch(batch *statedb.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
 	var keyBytes, valBytes []byte
 	var err error
 	for dataKey, pvtData := range entries.dataEntries {
@@ -475,7 +479,7 @@ func addNewDataEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch, entries *e
 	return nil
 }
 
-func addUpdatedExpiryEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
+func addUpdatedExpiryEntriesToUpdateBatch(batch *statedb.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
 	var keyBytes, valBytes []byte
 	var err error
 	for expiryKey, expiryData := range entries.expiryEntries {
@@ -488,7 +492,7 @@ func addUpdatedExpiryEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch, entr
 	return nil
 }
 
-func addUpdatedMissingDataEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
+func addUpdatedMissingDataEntriesToUpdateBatch(batch *statedb.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) error {
 	var keyBytes, valBytes []byte
 	var err error
 	for nsCollBlk, missingData := range entries.missingDataEntries {
@@ -506,7 +510,7 @@ func addUpdatedMissingDataEntriesToUpdateBatch(batch *leveldbhelper.UpdateBatch,
 	return nil
 }
 
-func addLastUpdatedOldBlocksList(batch *leveldbhelper.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) {
+func addLastUpdatedOldBlocksList(batch *statedb.UpdateBatch, entries *entriesForPvtDataOfOldBlocks) {
 	// create a list of blocks' pvtData which are being stored. If this list is
 	// found during the recovery, the stateDB may not be in sync with the pvtData
 	// and needs recovery. In a normal flow, once the stateDB is synced, the
@@ -536,7 +540,7 @@ func addLastUpdatedOldBlocksList(batch *leveldbhelper.UpdateBatch, entries *entr
 	batch.Put(lastUpdatedOldBlocksKey, buf.Bytes())
 }
 
-func (s *store) commitBatch(batch *leveldbhelper.UpdateBatch) error {
+func (s *store) commitBatch(batch *statedb.UpdateBatch) error {
 	// commit the batch to the store
 	if err := s.db.WriteBatch(batch, true); err != nil {
 		return err
@@ -593,7 +597,7 @@ func (s *store) getLastUpdatedOldBlocksList() ([]uint64, error) {
 
 // ResetLastUpdatedOldBlocksList implements the function in the interface `Store`
 func (s *store) ResetLastUpdatedOldBlocksList() error {
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	batch.Delete(lastUpdatedOldBlocksKey)
 	if err := s.db.WriteBatch(batch, true); err != nil {
 		return err
@@ -666,7 +670,7 @@ func (s *store) InitLastCommittedBlock(blockNum uint64) error {
 	if !(s.isEmpty && !s.batchPending) {
 		return &ErrIllegalCall{"The private data store is not empty. InitLastCommittedBlock() function call is not allowed"}
 	}
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	batch.Put(lastCommittedBlkkey, encodeLastCommittedBlockVal(blockNum))
 	if err := s.db.WriteBatch(batch, true); err != nil {
 		return err
@@ -762,7 +766,7 @@ func (s *store) ProcessCollsEligibilityEnabled(committingBlk uint64, nsCollMap m
 	if err != nil {
 		return err
 	}
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	batch.Put(key, val)
 	if err = s.db.WriteBatch(batch, true); err != nil {
 		return err
@@ -788,7 +792,7 @@ func (s *store) performPurgeIfScheduled(latestCommittedBlk uint64) {
 }
 
 func (s *store) purgeExpiredData(minBlkNum, maxBlkNum uint64) error {
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	expiryEntries, err := s.retrieveExpiryEntries(minBlkNum, maxBlkNum)
 	if err != nil || len(expiryEntries) == 0 {
 		return err
@@ -851,7 +855,7 @@ func (s *store) processCollElgEvents(maxBatchSize, batchesInterval int) {
 	collElgStartKey, collElgEndKey := createRangeScanKeysForCollElg()
 	eventItr := s.db.GetIterator(collElgStartKey, collElgEndKey)
 	defer eventItr.Release()
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := statedb.NewUpdateBatch()
 	totalEntriesConverted := 0
 
 	for eventItr.Next() {
@@ -882,7 +886,7 @@ func (s *store) processCollElgEvents(maxBatchSize, batchesInterval int) {
 					collEntriesConverted++
 					if batch.Len() > maxBatchSize {
 						s.db.WriteBatch(batch, true)
-						batch = leveldbhelper.NewUpdateBatch()
+						batch = statedb.NewUpdateBatch()
 						sleepTime := time.Duration(batchesInterval)
 						logger.Infof("Going to sleep for %d milliseconds between batches. Entries for [ns=%s, coll=%s] converted so far = %d",
 							sleepTime, ns, coll, collEntriesConverted)

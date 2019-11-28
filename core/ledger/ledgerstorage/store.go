@@ -135,7 +135,7 @@ func (s *Store) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
 		if err := s.pvtdataStore.Prepare(blockAndPvtdata.Block.Header.Number, validTxPvtData, validTxMissingPvtData); err != nil {
 			return err
 		}
-		writtenToPvtStore = true
+		//writtenToPvtStore = true
 	} else {
 		logger.Debugf("Skipping writing block [%d] to pvt block store as the store height is [%d]", blockNum, pvtBlkStoreHt)
 	}
@@ -201,9 +201,9 @@ func (s *Store) GetPvtDataAndBlockByNum(blockNum uint64, filter ledger.PvtNsColl
 	if block, err = s.RetrieveBlockByNumber(blockNum); err != nil {
 		return nil, err
 	}
-	if pvtdata, err = s.getPvtDataByNumWithoutLock(blockNum, filter); err != nil {
-		return nil, err
-	}
+	//if pvtdata, err = s.getPvtDataByNumWithoutLock(blockNum, filter); err != nil {
+	//	return nil, err
+	//}
 	return &ledger.BlockAndPvtData{Block: cached.WrapBlock(block), PvtData: constructPvtdataMap(pvtdata)}, nil
 }
 
@@ -331,10 +331,11 @@ func (s *Store) syncPvtdataStoreWithBlockStore() error {
 }
 
 func constructPvtdataMap(pvtdata []*ledger.TxPvtData) map[uint64]*ledger.TxPvtData {
-	if pvtdata == nil {
-		return nil
-	}
+
 	m := make(map[uint64]*ledger.TxPvtData)
+	if pvtdata == nil {
+		return m
+	}
 	for _, pvtdatum := range pvtdata {
 		m[pvtdatum.SeqInBlock] = pvtdatum
 	}

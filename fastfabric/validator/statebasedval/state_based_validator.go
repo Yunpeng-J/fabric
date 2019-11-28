@@ -8,7 +8,6 @@ package statebasedval
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/go-python/gpython/repl"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
@@ -23,6 +22,7 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	"io/ioutil"
 	"strings"
+	"sync"
 
 	// import required modules
 	_ "github.com/go-python/gpython/builtin"
@@ -38,19 +38,36 @@ var logger = flogging.MustGetLogger("statebasedval")
 type Validator struct {
 	db            privacyenabledstate.DB
 	validatedKeys chan map[string]*version.Height
+	vm            *repl.REPL
+	output        func() string
+	executeLock   sync.Mutex
 }
 
 // NewValidator constructs StateValidator
 func NewValidator(db privacyenabledstate.DB) *Validator {
-	validator := &Validator{db, make(chan map[string]*version.Height, 1)}
+	ui := &mockUI{}
+	validator := &Validator{
+		db:            db,
+		validatedKeys: make(chan map[string]*version.Height, 1),
+		vm:            repl.New(),
+		output:        func() string { return ui.output },
+	}
 	validator.validatedKeys <- make(map[string]*version.Height)
+	validator.vm.SetUI(ui)
+
+	data, err := ioutil.ReadFile("../chaincode/contract.py")
+	if err != nil {
+		logger.Fatal(err)
+	}
+	code := string(data)
+	validator.vm.Run(code)
+
 	return validator
 }
 
 // preLoadCommittedVersionOfRSet loads committed version of all keys in each
 // transaction's read set into a cache.
 func (v *Validator) preLoadCommittedVersionOfRSet(block *internalVal.Block) error {
-	fmt.Println("doing PreLoad")
 	// Collect both public and hashed keys in read sets of all transactions in a given block
 	var pubKeys []*statedb.CompositeKey
 	var hashedKeys []*privacyenabledstate.HashedCompositeKey
@@ -111,9 +128,6 @@ func (v *Validator) preLoadCommittedVersionOfRSet(block *internalVal.Block) erro
 func (v *Validator) ValidateAndPrepareBatch(block *internalVal.Block, doMVCCValidation bool, committedTxs chan<- *dependency.Transaction) (*internalVal.PubAndHashUpdates, error) {
 	defer close(committedTxs)
 
-	fmt.Println("Validator ValidateAndPrepareBatch")
-	fmt.Println("ValidateAndPrepareBatch internalBlock.Txs len after preprocess", len(block.Txs))
-
 	// Check whether statedb implements BulkOptimizable interface. For now,
 	// only CouchDB implements BulkOptimizable to reduce the number of REST
 	// API calls from peer to CouchDB instance.
@@ -124,23 +138,18 @@ func (v *Validator) ValidateAndPrepareBatch(block *internalVal.Block, doMVCCVali
 		}
 	}
 
-	fmt.Println("after bulkOptimizable")
-
 	updates := internalVal.NewPubAndHashUpdates()
 	txs := block.Txs
 	processedTxs := make(chan *dependency.Transaction, cap(txs))
 	defer close(processedTxs)
 	block.Txs = processedTxs
 
-	fmt.Println("len and cap of block", len(txs), cap(txs))
 	for tx := range txs {
-		fmt.Println("validating keys in tx", tx.Version)
 		var validationCode peer.TxValidationCode
 		var err error
 		if validationCode, err = v.validateEndorserTX(tx, doMVCCValidation, updates); err != nil {
 			return nil, err
 		}
-		fmt.Println("got validationCode")
 		tx.ValidationCode = validationCode
 		if validationCode == peer.TxValidationCode_VALID {
 			logger.Debugf("Block [%d] Transaction index [%d] TxId [%s] marked as valid by state validator", block.Num, tx.Version.TxNum, tx.TxID)
@@ -153,7 +162,6 @@ func (v *Validator) ValidateAndPrepareBatch(block *internalVal.Block, doMVCCVali
 		processedTxs <- tx
 		committedTxs <- tx
 	}
-	fmt.Println("returning updates")
 	return updates, nil
 }
 
@@ -183,11 +191,9 @@ func (v *Validator) validateTx(tx *dependency.Transaction, updates *internalVal.
 	// Uncomment the following only for local debugging. Don't want to print data in the logs in production
 	//logger.Debugf("validateTx - validating txRWSet: %s", spew.Sdump(txRWSet))
 
-	fmt.Println("validateTx", tx.RwSet)
 	for _, nsRWSet := range tx.RwSet.NsRwSets {
 		ns := nsRWSet.NameSpace
 
-		fmt.Println("before validateReadSet")
 		// Validate public reads
 		if valid, err := v.validateReadSet(ns, nsRWSet.KvRwSet.Reads, updates.PubUpdates); !valid || err != nil {
 			if err != nil {
@@ -210,9 +216,7 @@ func (v *Validator) validateTx(tx *dependency.Transaction, updates *internalVal.
 			return peer.TxValidationCode_MVCC_READ_CONFLICT, nil
 		}
 	}
-	fmt.Println("before rememberWrites")
 	v.rememberWrites(tx.RwSet, tx.Version)
-	fmt.Println("after rememberWrites")
 
 	return peer.TxValidationCode_VALID, nil
 }
@@ -244,9 +248,7 @@ func (v *Validator) validateReadSet(ns string, kvReads []*kvrwset.KVRead, update
 // i.e., it checks whether a key/version combination is already updated in the statedb (by an already committed block)
 // or in the updates (by a preceding valid transaction in the current block)
 func (v *Validator) validateKVRead(ns string, kvRead *kvrwset.KVRead, updates *privacyenabledstate.PubUpdateBatch) (bool, error) {
-	fmt.Println("validateKVRead")
 	if updates.Exists(ns, kvRead.Key) {
-		fmt.Println("conflict in updates")
 		return false, nil
 	}
 
@@ -268,11 +270,9 @@ func (v *Validator) validateKVRead(ns string, kvRead *kvrwset.KVRead, updates *p
 		if ver.Compare(committedVersion) <= 1 {
 			delete(validatedKeys, ns+"_"+kvRead.Key)
 			v.validatedKeys <- validatedKeys
-			fmt.Println("removing committed key from buffer")
 			return true, nil
 		}
 		if !version.AreSame(ver, rwsetutil.NewVersion(kvRead.Version)) {
-			fmt.Println("conflict in validated keys")
 			v.validatedKeys <- validatedKeys
 			return false, nil
 		}
@@ -380,49 +380,34 @@ func (m *mockUI) Print(s string) {
 }
 
 func (v *Validator) reExecute(tx *dependency.Transaction, updates *internalVal.PubAndHashUpdates) peer.TxValidationCode {
-	valCode := executeChaincode("../chaincode/contract.py", tx, updates, v.db)
+	v.executeLock.Lock()
+	valCode := v.executeChaincode(tx, updates, v.db)
+	v.executeLock.Unlock()
 	if valCode == peer.TxValidationCode_VALID {
 		v.rememberWrites(tx.RwSet, tx.Version)
 	}
 	return valCode
 }
 
-func executeChaincode(contract string, transaction *dependency.Transaction, updates *internalVal.PubAndHashUpdates, db privacyenabledstate.DB) peer.TxValidationCode {
-	r := repl.New()
-	ui := &mockUI{}
-	r.SetUI(ui)
-
-	data, err := ioutil.ReadFile(contract)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
+func (v *Validator) executeChaincode(transaction *dependency.Transaction, updates *internalVal.PubAndHashUpdates, db privacyenabledstate.DB) peer.TxValidationCode {
 	rwset := prepareRwSet(transaction.RwSet, updates, db)
 	benchmark := rwset[0]["benchmark"]
 	delete(rwset[0], "benchmark")
 	args := getArgs(transaction.Payload)
 
-	code := string(data)
-	r.Run(code)
 	pyRwSet := pythonifyRwSet(rwset)
 	pyArgs := pythonifySlice(args)
-	fmt.Println("rwset:", pyRwSet)
-	fmt.Println("args:", pyArgs)
 	call := "execute(" + pyRwSet + "," + pyArgs + ")"
-	r.RunWithGas(call, config.Gas)
-	if r.OutOfGas {
+	v.vm.RunWithGas(call, config.Gas)
+	if v.vm.OutOfGas {
 		return peer.TxValidationCode_INVALID_OTHER_REASON
 	}
 
-	fmt.Println(ui.output)
-	newSet := toRwSetObject(ui.output)
+	newSet := toRwSetObject(v.output())
 	newSet[0]["benchmark"] = benchmark
-	fmt.Println("output", newSet)
 	if err := compareAndUpdate(transaction, newSet); err != nil {
-		fmt.Println("invalid:", err)
 		return peer.TxValidationCode_BAD_RWSET
 	}
-	fmt.Println("valid")
 	return peer.TxValidationCode_VALID
 }
 
@@ -499,7 +484,6 @@ func compareAndUpdate(transaction *dependency.Transaction, newSet []map[string]i
 		for _, r := range ns.KvRwSet.Reads {
 			readCount++
 			if _, ok := newSet[0][r.Key]; !ok {
-				fmt.Println("compareAndUpdate 0 error on:", r.Key)
 				hasError = true
 				break
 			}
@@ -509,7 +493,6 @@ func compareAndUpdate(transaction *dependency.Transaction, newSet []map[string]i
 			if !strings.HasPrefix(w.Key, "oracle_") {
 				writeCount++
 				if _, ok := newSet[1][w.Key]; !ok {
-					fmt.Println("compareAndUpdate 1 error on:", w.Key)
 					hasError = true
 					break
 				} else {
@@ -518,7 +501,6 @@ func compareAndUpdate(transaction *dependency.Transaction, newSet []map[string]i
 			} else {
 				oracleCount++
 				if _, ok := newSet[2][strings.TrimPrefix(w.Key, "oracle_")]; !ok {
-					fmt.Println("compareAndUpdate 2 error on:", w.Key)
 					hasError = true
 					break
 				}

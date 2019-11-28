@@ -8,6 +8,7 @@ package internalVal
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"io/ioutil"
 	"os"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/storageutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/util"
@@ -389,7 +389,7 @@ func TestTxOpsPreparationPvtdataHashes(t *testing.T) {
 func testutilBuildRwset(t *testing.T,
 	kvWrites map[compositeKey][]byte,
 	metadataWrites map[compositeKey]map[string][]byte) *cached.TxRwSet {
-	rwsetBuilder := cached.NewRWSetBuilder()
+	rwsetBuilder := rwsetutil.NewRWSetBuilder()
 	for kvwrite, val := range kvWrites {
 		if kvwrite.coll == "" {
 			rwsetBuilder.AddToWriteSet(kvwrite.ns, kvwrite.key, val)

@@ -7,7 +7,6 @@ import (
 	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric/protos/peer"
 	"testing"
-	"time"
 )
 
 func Test_SingleBlock_SingleTX_SingleKeyRead(t *testing.T) {
@@ -144,7 +143,6 @@ func Test_SingleBlock_TwoTxs_SecondBlocked(t *testing.T) {
 		t.Errorf("Wrong txID. Expected %v, got %v", txIDs[0], tx.TxID)
 	}
 
-	time.Sleep(1 * time.Second)
 	select {
 	case tx, more := <-txs:
 		if more {
@@ -177,7 +175,6 @@ func Test_SingleBlock_TwoTxs_SecondFreedAfterFirstCommitted(t *testing.T) {
 		t.Errorf("Wrong txID. Expected %v, got %v", txIDs[0], tx.TxID)
 	}
 
-	time.Sleep(1 * time.Second)
 	select {
 	case tx = <-txs:
 		t.Errorf("There were 2 transactions in the channel, expected 1: %v", tx.TxID)
@@ -256,19 +253,19 @@ func Test_MultipleBlocks_OutOfOrder(t *testing.T) {
 		t.Errorf("There were %d transactions in the channel, expected 2", count)
 	}
 
-	txs2, err := analyzer.Analyze(cached.WrapBlock(rawBlock3))
+	txs3, err := analyzer.Analyze(cached.WrapBlock(rawBlock3))
 	if err != nil {
 		t.Error(err)
 	}
 
-	txs3, err := analyzer.Analyze(cached.WrapBlock(rawBlock2))
+	txs2, err := analyzer.Analyze(cached.WrapBlock(rawBlock2))
 	if err != nil {
 		t.Error(err)
 	}
 
-	time.Sleep(1 * time.Second)
-
-	for {
+	closed2 := false
+	closed3 := false
+	for !closed2 || !closed3 {
 		select {
 		case tx, more := <-txs2:
 			if more {
@@ -277,6 +274,8 @@ func Test_MultipleBlocks_OutOfOrder(t *testing.T) {
 				}
 				analyzer.NotifyAboutCommit(tx)
 				count++
+			} else {
+				closed2 = true
 			}
 		case tx, more := <-txs3:
 			if more {
@@ -285,13 +284,13 @@ func Test_MultipleBlocks_OutOfOrder(t *testing.T) {
 				}
 				analyzer.NotifyAboutCommit(tx)
 				count++
+			} else {
+				closed3 = true
 			}
-		default:
-			if count > 6 {
-				t.Errorf("There were %d transactions in the channel, expected 6", count)
-			}
-			return
 		}
+	}
+	if count != 6 {
+		t.Errorf("Expected 6 total txs, got %v", count)
 	}
 }
 

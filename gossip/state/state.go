@@ -8,8 +8,10 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/fastfabric/config"
+	"golang.org/x/sync/semaphore"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,7 +48,7 @@ const (
 	DefChannelBufferSize     = 100
 	DefAntiEntropyMaxRetries = 3
 
-	DefMaxBlockDistance = 100
+	DefMaxBlockDistance = 10000000
 
 	Blocking    = true
 	NonBlocking = false
@@ -568,6 +570,8 @@ func (s *GossipStateProviderImpl) queueNewMessage(msg *proto.GossipMessage) {
 func (s *GossipStateProviderImpl) deliverPayloads() {
 	defer s.done.Done()
 	errChan := make(chan error, 10)
+	sem := semaphore.NewWeighted(5)
+	ctx := context.Background()
 	for {
 		select {
 		// Wait for notification that next seq has arrived
@@ -587,8 +591,12 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 						continue
 					}
 				}
+				if err := sem.Acquire(ctx, 1); err != nil {
+					logger.Fatal("Couldn't acquire semaphore lock")
+				}
 				errIn := s.commitBlock(block, p)
 				go func() {
+					sem.Release(1)
 					errChan <- <-errIn
 				}()
 
@@ -827,7 +835,6 @@ func (s *GossipStateProviderImpl) commitBlock(block *cached.Block, pvtData util.
 		s.mediator.UpdateLedgerHeight(block.Header.Number+1, common2.ChainID(s.chainID))
 		logger.Debugf("[%s] Committed block [%d] with %d transaction(s)",
 			s.chainID, block.Header.Number, len(block.Data.Data))
-
 		s.stateMetrics.Height.With("channel", s.chainID).Set(float64(block.Header.Number + 1))
 		errOut <- nil
 	}()

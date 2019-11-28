@@ -117,9 +117,9 @@ func (txmgr *LockBasedTxMgr) ValidateAndPrepare(blockAndPvtdata *ledger.BlockAnd
 	// LoadCommittedVersions() is refactored to return a map, we can allow
 	// these three functions to execute parallely.
 	logger.Debugf("Waiting for purge mgr to finish the background job of computing expirying keys for the block")
-	txmgr.pvtdataPurgeMgr.WaitForPrepareToFinish()
-	txmgr.oldBlockCommit.Lock()
-	defer txmgr.oldBlockCommit.Unlock()
+	//txmgr.pvtdataPurgeMgr.WaitForPrepareToFinish()
+	//txmgr.oldBlockCommit.Lock()
+	//defer txmgr.oldBlockCommit.Unlock()
 	logger.Debug("lock acquired on oldBlockCommit for validating read set version against the committed version")
 
 	block := blockAndPvtdata.Block
@@ -450,32 +450,32 @@ func (txmgr *LockBasedTxMgr) Commit() error {
 	//     batch based on the current state and if we allow regular block commits at the
 	//     same time, the former may overwrite the newer versions of the data and we may
 	//     end up with an incorrect update batch.
-	txmgr.oldBlockCommit.Lock()
-	defer txmgr.oldBlockCommit.Unlock()
-	logger.Debug("lock acquired on oldBlockCommit for committing regular updates to state database")
+	//txmgr.oldBlockCommit.Lock()
+	//defer txmgr.oldBlockCommit.Unlock()
+	//logger.Debug("lock acquired on oldBlockCommit for committing regular updates to state database")
 
 	current := <-txmgr.current
 	// When using the purge manager for the first block commit after peer start, the asynchronous function
 	// 'PrepareForExpiringKeys' is invoked in-line. However, for the subsequent blocks commits, this function is invoked
 	// in advance for the next block
-	if !txmgr.pvtdataPurgeMgr.usedOnce {
-		txmgr.pvtdataPurgeMgr.PrepareForExpiringKeys(current.blockNum())
-		txmgr.pvtdataPurgeMgr.usedOnce = true
-	}
-	defer func() {
-		txmgr.pvtdataPurgeMgr.PrepareForExpiringKeys(current.blockNum() + 1)
-		logger.Debugf("launched the background routine for preparing keys to purge with the next block")
-	}()
+	//if !txmgr.pvtdataPurgeMgr.usedOnce {
+	//	txmgr.pvtdataPurgeMgr.PrepareForExpiringKeys(current.blockNum())
+	//	txmgr.pvtdataPurgeMgr.usedOnce = true
+	//}
+	//defer func() {
+	//	txmgr.pvtdataPurgeMgr.PrepareForExpiringKeys(current.blockNum() + 1)
+	//	logger.Debugf("launched the background routine for preparing keys to purge with the next block")
+	//}()
 
 	logger.Debugf("Committing updates to state database")
 	if current == nil {
 		panic("validateAndPrepare() method should have been called before calling commit()")
 	}
 
-	if err := txmgr.pvtdataPurgeMgr.DeleteExpiredAndUpdateBookkeeping(
-		current.batch.PvtUpdates, current.batch.HashUpdates); err != nil {
-		return err
-	}
+	//if err := txmgr.pvtdataPurgeMgr.DeleteExpiredAndUpdateBookkeeping(
+	//	current.batch.PvtUpdates, current.batch.HashUpdates); err != nil {
+	//	return err
+	//}
 
 	commitHeight := version.NewHeight(current.blockNum(), current.maxTxNumber())
 	txmgr.commitRWLock.Lock()
@@ -492,9 +492,9 @@ func (txmgr *LockBasedTxMgr) Commit() error {
 	logger.Debugf("Updates committed to state database and the write lock is released")
 
 	// purge manager should be called (in this call the purge mgr removes the expiry entries from schedules) after committing to statedb
-	if err := txmgr.pvtdataPurgeMgr.BlockCommitDone(); err != nil {
-		return err
-	}
+	//if err := txmgr.pvtdataPurgeMgr.BlockCommitDone(); err != nil {
+	//	return err
+	//}
 	// In the case of error state listeners will not recieve this call - instead a peer panic is caused by the ledger upon receiveing
 	// an error from this function
 	txmgr.updateStateListeners(current)

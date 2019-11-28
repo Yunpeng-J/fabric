@@ -13,49 +13,64 @@ import (
 )
 
 func newFsBlockStore(ledgerId string) *BlockStoreImpl {
-	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}}
+	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}, localCache: map[uint64]*common.Block{}, futureBlocks: map[uint64]*common.Block{}, bcInfo: &common.BlockchainInfo{}}
 }
 
 type BlockStoreImpl struct {
-	client        remote.StoragePeerClient
-	ledgerId      string
-	txCache       sync.Map
-	blockHeight   uint64
-	currentHash   []byte
-	previousHash  []byte
-	initialBlocks []*common.Block
+	client       remote.StoragePeerClient
+	ledgerId     string
+	txCache      sync.Map
+	blockHeight  uint64
+	currentHash  []byte
+	previousHash []byte
+	localCache   map[uint64]*common.Block
+	futureBlocks map[uint64]*common.Block
+	infoMtx      sync.RWMutex
+	bcInfo       *common.BlockchainInfo
 }
 
 func (b *BlockStoreImpl) AddBlock(block *common.Block) error {
-	if block.Header.Number <= 1 {
-		b.initialBlocks = append(b.initialBlocks, block)
-	} else {
-		if block.Header.Number != b.blockHeight {
-			return errors.Errorf(
-				"block number should have been %d but was %d",
-				b.blockHeight, block.Header.Number,
-			)
-		}
+	b.localCache[block.Header.Number] = block
+	if block.Header.Number == b.blockHeight {
+		ok := true
+		for ok {
+			if !bytes.Equal(block.Header.PreviousHash, b.currentHash) {
+				return errors.Errorf(
+					"unexpected Previous block hash. Expected PreviousHash = [%x], PreviousHash referred in the latest block= [%x]",
+					b.currentHash, block.Header.PreviousHash,
+				)
+			}
+			b.previousHash = b.currentHash
+			b.currentHash = block.Header.Hash()
+			b.blockHeight = block.Header.Number + 1
 
-		if !bytes.Equal(block.Header.PreviousHash, b.currentHash) {
-			return errors.Errorf(
-				"unexpected Previous block hash. Expected PreviousHash = [%x], PreviousHash referred in the latest block= [%x]",
-				b.currentHash, block.Header.PreviousHash,
-			)
+			b.infoMtx.Lock()
+			b.bcInfo = &common.BlockchainInfo{
+				Height:            b.blockHeight,
+				CurrentBlockHash:  b.currentHash,
+				PreviousBlockHash: b.previousHash,
+			}
+			b.infoMtx.Unlock()
+			block, ok = b.futureBlocks[b.blockHeight]
+			delete(b.futureBlocks, b.blockHeight)
 		}
+		return nil
+	} else {
+		if block.Header.Number > b.blockHeight {
+			b.futureBlocks[block.Header.Number] = block
+			return nil
+		}
+		return errors.Errorf(
+			"block number should have been %d but was %d",
+			b.blockHeight, block.Header.Number,
+		)
 	}
-	b.previousHash = b.currentHash
-	b.currentHash = block.Header.Hash()
-	b.blockHeight = block.Header.Number + 1
-	return nil
 }
 
 func (b *BlockStoreImpl) GetBlockchainInfo() (*common.BlockchainInfo, error) {
-	return &common.BlockchainInfo{
-		Height:            b.blockHeight,
-		CurrentBlockHash:  b.currentHash,
-		PreviousBlockHash: b.previousHash,
-	}, nil
+	b.infoMtx.RLock()
+	defer b.infoMtx.RUnlock()
+	return b.bcInfo, nil
 }
 
 type Iterator struct {
@@ -86,12 +101,10 @@ func (b *BlockStoreImpl) RetrieveBlockByHash(blockHash []byte) (*common.Block, e
 }
 
 func (b *BlockStoreImpl) RetrieveBlockByNumber(blockNum uint64) (*common.Block, error) {
-	if blockNum <= 1 {
-		if uint64(len(b.initialBlocks)) < blockNum+1 {
-			return nil, nil
-		}
-		return b.initialBlocks[blockNum], nil
+	if block, ok := b.localCache[blockNum]; ok {
+		return block, nil
 	}
+
 	return b.client.RetrieveBlockByNumber(context.Background(), &remote.RetrieveBlockByNumberRequest{
 		LedgerId: b.ledgerId,
 		BlockNo:  blockNum})

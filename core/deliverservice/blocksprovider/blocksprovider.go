@@ -184,8 +184,7 @@ func (b *blocksProviderImpl) DeliverBlocks() {
 			}
 
 			if !(blockNum > 1 && (config.IsEndorser || config.IsStorage)) {
-				gossipChan := make(chan *gossip_proto.Payload, 1)
-				gossip.Queue[blockNum] = gossipChan
+				gossipChan := gossip.GetQueue(blockNum)
 				go func(c chan *gossip_proto.Payload) {
 					// Gossip messages with other nodes
 					logger.Debugf("[%s] Gossiping block [%d], peers number [%d]", b.chainID, blockNum, numberOfPeers)

@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/dependency"
+	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -294,10 +295,7 @@ func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDa
 				c.NotifyAboutCommit(tx)
 			}
 			c.reportCommitDuration(time.Since(commitStart))
-			if err != nil {
-				errReturn <- errors.Wrap(err, "commit failed")
-				return
-			}
+			stopwatch.Now("commit_benchmark")
 
 			purgeStart := time.Now()
 

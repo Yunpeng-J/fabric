@@ -44,6 +44,9 @@ type blockfileMgr struct {
 	cpInfoCond        *sync.Cond
 	currentFileWriter *blockfileWriter
 	bcInfo            atomic.Value
+	futureBlocks      map[uint64]*common.Block
+	addBlockErr       chan error
+	addBlockInput     chan *common.Block
 }
 
 /*
@@ -96,7 +99,7 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 		panic(fmt.Sprintf("Error creating block storage root dir [%s]: %s", rootDir, err))
 	}
 	// Instantiate the manager, i.e. blockFileMgr structure
-	mgr := &blockfileMgr{rootDir: rootDir, conf: conf, db: indexStore}
+	mgr := &blockfileMgr{rootDir: rootDir, conf: conf, db: indexStore, futureBlocks: map[uint64]*common.Block{}}
 
 	// cp = checkpointInfo, retrieve from the database the file suffix or number of where blocks were stored.
 	// It also retrieves the current size of that file and the last block number that was written to that file.
@@ -165,6 +168,11 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 			PreviousBlockHash: previousBlockHash}
 	}
 	mgr.bcInfo.Store(bcInfo)
+
+	mgr.addBlockErr = make(chan error, 1)
+	mgr.addBlockInput = make(chan *common.Block, 1)
+	go mgr.addBlockAsync(mgr.addBlockInput, mgr.addBlockErr)
+
 	return mgr
 }
 
@@ -237,92 +245,111 @@ func (mgr *blockfileMgr) moveToNextFile() {
 	mgr.updateCheckpoint(cpInfo)
 }
 
-func (mgr *blockfileMgr) addBlock(block *common.Block) error {
-	bcInfo := mgr.getBlockchainInfo()
-	if block.Header.Number != bcInfo.Height {
-		return errors.Errorf(
-			"block number should have been %d but was %d",
-			mgr.getBlockchainInfo().Height, block.Header.Number,
-		)
-	}
-
-	// Add the previous hash check - Though, not essential but may not be a bad idea to
-	// verify the field `block.Header.PreviousHash` present in the block.
-	// This check is a simple bytes comparison and hence does not cause any observable performance penalty
-	// and may help in detecting a rare scenario if there is any bug in the ordering service.
-	if !bytes.Equal(block.Header.PreviousHash, bcInfo.CurrentBlockHash) {
-		return errors.Errorf(
-			"unexpected Previous block hash. Expected PreviousHash = [%x], PreviousHash referred in the latest block= [%x]",
-			bcInfo.CurrentBlockHash, block.Header.PreviousHash,
-		)
-	}
-	blockBytes, info, err := serializeBlock(block)
-	if err != nil {
-		return errors.WithMessage(err, "error serializing block")
-	}
-	blockHash := block.Header.Hash()
-	//Get the location / offset where each transaction starts in the block and where the block ends
-	txOffsets := info.txOffsets
-	currentOffset := mgr.cpInfo.latestFileChunksize
-
-	blockBytesLen := len(blockBytes)
-	blockBytesEncodedLen := proto.EncodeVarint(uint64(blockBytesLen))
-	totalBytesToAppend := blockBytesLen + len(blockBytesEncodedLen)
-
-	//Determine if we need to start a new file since the size of this block
-	//exceeds the amount of space left in the current file
-	if currentOffset+totalBytesToAppend > mgr.conf.maxBlockfileSize {
-		mgr.moveToNextFile()
-		currentOffset = 0
-	}
-	//append blockBytesEncodedLen to the file
-	err = mgr.currentFileWriter.append(blockBytesEncodedLen, false)
-	if err == nil {
-		//append the actual block bytes to the file
-		err = mgr.currentFileWriter.append(blockBytes, true)
-	}
-	if err != nil {
-		truncateErr := mgr.currentFileWriter.truncateFile(mgr.cpInfo.latestFileChunksize)
-		if truncateErr != nil {
-			panic(fmt.Sprintf("Could not truncate current file to known size after an error during block append: %s", err))
+func (mgr *blockfileMgr) addBlockAsync(blockChan chan *common.Block, errChan chan error) {
+	for block := range blockChan {
+		bcInfo := mgr.getBlockchainInfo()
+		if block.Header.Number != bcInfo.Height {
+			if block.Header.Number > bcInfo.Height {
+				mgr.futureBlocks[block.Header.Number] = block
+			} else {
+				errChan <- errors.Errorf(
+					"block number should have been %d but was %d",
+					mgr.getBlockchainInfo().Height, block.Header.Number,
+				)
+			}
+			continue
 		}
-		return errors.WithMessage(err, "error appending block to file")
-	}
+		height := bcInfo.Height
+		ok := true
+		for ok {
 
-	//Update the checkpoint info with the results of adding the new block
-	currentCPInfo := mgr.cpInfo
-	newCPInfo := &checkpointInfo{
-		latestFileChunkSuffixNum: currentCPInfo.latestFileChunkSuffixNum,
-		latestFileChunksize:      currentCPInfo.latestFileChunksize + totalBytesToAppend,
-		isChainEmpty:             false,
-		lastBlockNumber:          block.Header.Number}
-	//save the checkpoint information in the database
-	if err = mgr.saveCurrentInfo(newCPInfo, false); err != nil {
-		truncateErr := mgr.currentFileWriter.truncateFile(currentCPInfo.latestFileChunksize)
-		if truncateErr != nil {
-			panic(fmt.Sprintf("Error in truncating current file to known size after an error in saving checkpoint info: %s", err))
+			// Add the previous hash check - Though, not essential but may not be a bad idea to
+			// verify the field `block.Header.PreviousHash` present in the block.
+			// This check is a simple bytes comparison and hence does not cause any observable performance penalty
+			// and may help in detecting a rare scenario if there is any bug in the ordering service.
+			if !bytes.Equal(block.Header.PreviousHash, bcInfo.CurrentBlockHash) {
+				errChan <- errors.Errorf(
+					"unexpected Previous block hash for block [%d]. Expected PreviousHash = [%x], PreviousHash referred in the latest block= [%x]",
+					block.Header.Number, bcInfo.CurrentBlockHash, block.Header.PreviousHash,
+				)
+			}
+			blockBytes, info, err := serializeBlock(block)
+			if err != nil {
+				errChan <- errors.WithMessage(err, "error serializing block")
+			}
+			blockHash := block.Header.Hash()
+			//Get the location / offset where each transaction starts in the block and where the block ends
+			txOffsets := info.txOffsets
+			currentOffset := mgr.cpInfo.latestFileChunksize
+
+			blockBytesLen := len(blockBytes)
+			blockBytesEncodedLen := proto.EncodeVarint(uint64(blockBytesLen))
+			totalBytesToAppend := blockBytesLen + len(blockBytesEncodedLen)
+
+			//Determine if we need to start a new file since the size of this block
+			//exceeds the amount of space left in the current file
+			if currentOffset+totalBytesToAppend > mgr.conf.maxBlockfileSize {
+				mgr.moveToNextFile()
+				currentOffset = 0
+			}
+			//append blockBytesEncodedLen to the file
+			err = mgr.currentFileWriter.append(blockBytesEncodedLen, false)
+			if err == nil {
+				//append the actual block bytes to the file
+				err = mgr.currentFileWriter.append(blockBytes, true)
+			}
+			if err != nil {
+				truncateErr := mgr.currentFileWriter.truncateFile(mgr.cpInfo.latestFileChunksize)
+				if truncateErr != nil {
+					panic(fmt.Sprintf("Could not truncate current file to known size after an error during block append: %s", err))
+				}
+				errChan <- errors.WithMessage(err, "error appending block to file")
+			}
+
+			//Update the checkpoint info with the results of adding the new block
+			currentCPInfo := mgr.cpInfo
+			newCPInfo := &checkpointInfo{
+				latestFileChunkSuffixNum: currentCPInfo.latestFileChunkSuffixNum,
+				latestFileChunksize:      currentCPInfo.latestFileChunksize + totalBytesToAppend,
+				isChainEmpty:             false,
+				lastBlockNumber:          block.Header.Number}
+			//save the checkpoint information in the database
+			if err = mgr.saveCurrentInfo(newCPInfo, false); err != nil {
+				truncateErr := mgr.currentFileWriter.truncateFile(currentCPInfo.latestFileChunksize)
+				if truncateErr != nil {
+					panic(fmt.Sprintf("Error in truncating current file to known size after an error in saving checkpoint info: %s", err))
+				}
+				errChan <- errors.WithMessage(err, "error saving current file info to db")
+			}
+
+			//Index block file location pointer updated with file suffex and offset for the new block
+			blockFLP := &fileLocPointer{fileSuffixNum: newCPInfo.latestFileChunkSuffixNum}
+			blockFLP.offset = currentOffset
+			// shift the txoffset because we prepend length of bytes before block bytes
+			for _, txOffset := range txOffsets {
+				txOffset.loc.offset += len(blockBytesEncodedLen)
+			}
+			//save the index in the database
+			if err = mgr.index.indexBlock(&blockIdxInfo{
+				blockNum: block.Header.Number, blockHash: blockHash,
+				flp: blockFLP, txOffsets: txOffsets, metadata: block.Metadata}); err != nil {
+				errChan <- err
+			}
+
+			//update the checkpoint info (for storage) and the blockchain info (for APIs) in the manager
+			mgr.updateCheckpoint(newCPInfo)
+			mgr.updateBlockchainInfo(blockHash, block)
+			height += 1
+			block, ok = mgr.futureBlocks[height]
+			if ok {
+				bcInfo = &common.BlockchainInfo{
+					Height:            block.Header.Number + 1,
+					CurrentBlockHash:  blockHash,
+					PreviousBlockHash: block.Header.PreviousHash,
+				}
+			}
 		}
-		return errors.WithMessage(err, "error saving current file info to db")
 	}
-
-	//Index block file location pointer updated with file suffex and offset for the new block
-	blockFLP := &fileLocPointer{fileSuffixNum: newCPInfo.latestFileChunkSuffixNum}
-	blockFLP.offset = currentOffset
-	// shift the txoffset because we prepend length of bytes before block bytes
-	for _, txOffset := range txOffsets {
-		txOffset.loc.offset += len(blockBytesEncodedLen)
-	}
-	//save the index in the database
-	if err = mgr.index.indexBlock(&blockIdxInfo{
-		blockNum: block.Header.Number, blockHash: blockHash,
-		flp: blockFLP, txOffsets: txOffsets, metadata: block.Metadata}); err != nil {
-		return err
-	}
-
-	//update the checkpoint info (for storage) and the blockchain info (for APIs) in the manager
-	mgr.updateCheckpoint(newCPInfo)
-	mgr.updateBlockchainInfo(blockHash, block)
-	return nil
 }
 
 func (mgr *blockfileMgr) syncIndex() error {
@@ -602,6 +629,16 @@ func (mgr *blockfileMgr) saveCurrentInfo(i *checkpointInfo, sync bool) error {
 		return err
 	}
 	return nil
+}
+
+func (mgr *blockfileMgr) addBlock(block *common.Block) error {
+	select {
+	case err := <-mgr.addBlockErr:
+		return err
+	default:
+		mgr.addBlockInput <- block
+		return nil
+	}
 }
 
 // scanForLastCompleteBlock scan a given block file and detects the last offset in the file

@@ -43,13 +43,13 @@ func (impl *DefaultImpl) ValidateAndPrepareBatch(blockAndPvtdata *ledger.BlockAn
 	block := blockAndPvtdata.Block
 	logger.Debugf("ValidateAndPrepareBatch() for block number = [%d]", block.Header.Number)
 	var internalBlock *internalVal.Block
-	var txsStatInfoChan <-chan []*txmgr.TxStatInfo
+	var txsStatInfo []*txmgr.TxStatInfo
 	var pubAndHashUpdates *internalVal.PubAndHashUpdates
 	var pvtUpdates *privacyenabledstate.PvtUpdateBatch
 	var err error
 
 	logger.Debug("preprocessing ProtoBlock...")
-	if internalBlock, txsStatInfoChan, err = preprocessProtoBlock(impl.txmgr, impl.db.ValidateKeyValue, block, blockAndPvtdata.UnblockedTxs, doMVCCValidation); err != nil {
+	if internalBlock, txsStatInfo, err = preprocessProtoBlock(impl.txmgr, impl.db.ValidateKeyValue, block, blockAndPvtdata.UnblockedTxs, doMVCCValidation); err != nil {
 		return nil, nil, err
 	}
 
@@ -65,13 +65,12 @@ func (impl *DefaultImpl) ValidateAndPrepareBatch(blockAndPvtdata *ledger.BlockAn
 	logger.Debug("ValidateAndPrepareBatch() complete")
 
 	txsFilter := util.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	statInfo := <-txsStatInfoChan
 	for i := range txsFilter {
-		statInfo[i].ValidationCode = txsFilter.Flag(i)
+		txsStatInfo[i].ValidationCode = txsFilter.Flag(i)
 	}
 	return &privacyenabledstate.UpdateBatch{
 		PubUpdates:  pubAndHashUpdates.PubUpdates,
 		HashUpdates: pubAndHashUpdates.HashUpdates,
 		PvtUpdates:  pvtUpdates,
-	}, statInfo, nil
+	}, txsStatInfo, nil
 }

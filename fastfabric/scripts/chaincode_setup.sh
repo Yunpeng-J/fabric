@@ -13,14 +13,14 @@ fi
 for i in ${endorsers[@]}
 do
     export CORE_PEER_ADDRESS=$(get_correct_peer_address ${i}):7051
-    peer chaincode install -l golang -n benchmark -v 1.0 -o ${ORDERER_ADDRESS}:7050 -p "github.com/hyperledger/fabric/fastfabric/chaincode"
+    peer chaincode install -l golang -n ${CHAINCODE} -v 1.0 -o ${ORDERER_ADDRESS}:7050 -p "github.com/hyperledger/fabric/fastfabric/chaincode"
 done
 
 for i in ${endorsers[@]}
 do
     export CORE_PEER_ADDRESS=$(get_correct_peer_address ${i}):7051
     a="'{\"Args\":[\"init\",\"0\", \"1\", \"0\"]}'"
-    echo peer chaincode instantiate -o $(get_correct_orderer_address):7050 -C ${CHANNEL} -n benchmark -v 1.0 -c ${a} | bash
+    echo peer chaincode instantiate -o $(get_correct_orderer_address):7050 -C ${CHANNEL} -n $CHAINCODE -v 1.0 -c ${a} | bash
 done
 
 sleep 5
