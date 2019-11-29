@@ -240,8 +240,7 @@ func (this *TxNode) setPrev(prev *TxNode) {
 				}
 				newDependencies[prevElement.TxID] = prevElement.Transaction
 			}
-			<-thisElement.dependencies
-			thisElement.dependencies <- newDependencies
+			thisElement.dependencies = newDependencies
 		}
 
 	}

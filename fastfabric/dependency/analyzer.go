@@ -12,16 +12,19 @@ import (
 var compositeKeySep = string([]byte{0x00})
 
 type analyzer struct {
-	keyDPs             chan map[string]chan *skipList
-	currentBlock       chan uint64
-	futureKnowledge    chan map[uint64]bool
-	outputPerBlock     chan map[uint64]chan *Transaction
+	keyDPs             map[string]*skipList
+	highWatermark      uint64 //all txs are known up to here
+	lowWatermark       uint64 //all txs are unblocked up to here
+	futureKnowledge    map[uint64]bool
+	outputPerBlock     map[uint64]chan *Transaction
+	outputLock         sync.RWMutex
 	blockedTxsPerBlock chan map[uint64]map[string]*Transaction
 	committedTxs       chan *Transaction
-	done               chan bool
-	committingTxs      chan map[string]*Transaction
-	once               sync.Once
-	input              chan uint64
+
+	done          chan bool
+	committingTxs map[string]*Transaction
+	once          sync.Once
+	input         chan uint64
 }
 
 func (a *analyzer) Stop() {
@@ -42,21 +45,17 @@ type Analyzer interface {
 
 func NewAnalyzer() Analyzer {
 	a := &analyzer{
-		keyDPs:             make(chan map[string]chan *skipList, 1),
-		currentBlock:       make(chan uint64, 1),
-		futureKnowledge:    make(chan map[uint64]bool, 1),
-		outputPerBlock:     make(chan map[uint64]chan *Transaction, 1),
+		keyDPs:             make(map[string]*skipList),
+		highWatermark:      0,
+		lowWatermark:       0,
+		futureKnowledge:    make(map[uint64]bool),
+		outputPerBlock:     make(map[uint64]chan *Transaction),
 		committedTxs:       make(chan *Transaction, 1000),
 		done:               make(chan bool),
-		committingTxs:      make(chan map[string]*Transaction, 1),
+		committingTxs:      make(map[string]*Transaction),
 		blockedTxsPerBlock: make(chan map[uint64]map[string]*Transaction, 1),
 		input:              make(chan uint64, 5),
 	}
-	a.keyDPs <- make(map[string]chan *skipList)
-	a.currentBlock <- 0
-	a.futureKnowledge <- make(map[uint64]bool)
-	a.outputPerBlock <- make(map[uint64]chan *Transaction)
-	a.committingTxs <- make(map[string]*Transaction)
 	a.blockedTxsPerBlock <- make(map[uint64]map[string]*Transaction)
 	go func() {
 		for {
@@ -85,7 +84,6 @@ func NewAnalyzer() Analyzer {
 
 func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 	blockNum := b.Header.Number
-	_ = b.UnmarshalAll()
 	envs, err := b.UnmarshalAllEnvelopes()
 	if err != nil {
 		return nil, err
@@ -105,9 +103,9 @@ func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 	}
 
 	output := make(chan *Transaction, len(txs))
-	opb := <-a.outputPerBlock
-	opb[blockNum] = output
-	a.outputPerBlock <- opb
+	a.outputLock.Lock()
+	a.outputPerBlock[blockNum] = output
+	a.outputLock.Unlock()
 	btx := <-a.blockedTxsPerBlock
 	btx[blockNum] = txs
 	a.blockedTxsPerBlock <- btx
@@ -126,54 +124,25 @@ func (a *analyzer) addDependencies(tx *Transaction) {
 				continue
 			}
 			compKey := constructCompositeKey(set.NameSpace, w.Key)
-			listChan := a.getDPListForKey(compKey)
-			list := <-listChan
+			list := a.getDPListForKey(compKey)
 			list.AddWrite(tx)
-			listChan <- list
 		}
 		for _, r := range set.KvRwSet.Reads {
 			compKey := constructCompositeKey(set.NameSpace, r.Key)
-			listChan := a.getDPListForKey(compKey)
-			list := <-listChan
+			list := a.getDPListForKey(compKey)
 			list.AddRead(tx)
-			listChan <- list
 		}
 	}
 }
 
-func (a *analyzer) release(tx *Transaction) {
-	ctx := <-a.committingTxs
-	if _, ok := ctx[tx.TxID]; !ok {
-		ctx[tx.TxID] = tx
-		a.committingTxs <- ctx
-
-		opb := <-a.outputPerBlock
-		opb[tx.Version.BlockNum] <- tx
-		btx := <-a.blockedTxsPerBlock
-		delete(btx[tx.Version.BlockNum], tx.TxID)
-		//fmt.Printf("Tx left in block [%d]: %d\n", tx.Version.BlockNum, btx[tx.Version.BlockNum] )
-		if len(btx[tx.Version.BlockNum]) == 0 {
-			delete(btx, tx.Version.BlockNum)
-			close(opb[tx.Version.BlockNum])
-		}
-		a.blockedTxsPerBlock <- btx
-		a.outputPerBlock <- opb
-	} else {
-		a.committingTxs <- ctx
-	}
-}
-
-func (a *analyzer) getDPListForKey(compKey string) chan *skipList {
-	kdp := <-a.keyDPs
-	listChan, ok := kdp[compKey]
+func (a *analyzer) getDPListForKey(compKey string) *skipList {
+	list, ok := a.keyDPs[compKey]
 	if !ok {
-		listChan = make(chan *skipList, 1)
-		list := NewSkipList()
-		listChan <- list
-		kdp[compKey] = listChan
+		list = NewSkipList()
+		a.keyDPs[compKey] = list
+
 	}
-	a.keyDPs <- kdp
-	return listChan
+	return list
 }
 
 func (a *analyzer) removeDependencies(tx *Transaction) {
@@ -183,11 +152,9 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 	for _, set := range tx.RwSet.NsRwSets {
 		for _, w := range set.KvRwSet.Writes {
 			compKey := constructCompositeKey(set.NameSpace, w.Key)
-			listChan := a.getDPListForKey(compKey)
-			list := <-listChan
+			list := a.getDPListForKey(compKey)
 			list.Delete(tx.TxID)
 			first := list.First()
-			listChan <- list
 			if first != nil {
 				for _, el := range first.elements {
 					a.tryRelease(el.Transaction)
@@ -196,11 +163,9 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 		}
 		for _, r := range set.KvRwSet.Reads {
 			compKey := constructCompositeKey(set.NameSpace, r.Key)
-			listChan := a.getDPListForKey(compKey)
-			list := <-listChan
+			list := a.getDPListForKey(compKey)
 			list.Delete(tx.TxID)
 			first := list.First()
-			listChan <- list
 			if first != nil {
 				for _, el := range first.elements {
 					a.tryRelease(el.Transaction)
@@ -211,83 +176,71 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 }
 
 func (a *analyzer) updateWatermark(analyzedBlockNum uint64) (changed bool) {
-	cbl := <-a.currentBlock
-	originlCbl := cbl
-	defer func() {
-		a.currentBlock <- cbl
-	}()
+	originlCbl := a.highWatermark
 
-	fk := <-a.futureKnowledge
-	defer func() { a.futureKnowledge <- fk }()
-
-	if analyzedBlockNum == cbl+1 {
-		cbl += 1
+	if analyzedBlockNum == a.highWatermark+1 {
+		a.highWatermark += 1
 	} else {
-		fk[analyzedBlockNum] = true
+		a.futureKnowledge[analyzedBlockNum] = true
 	}
 
-	for i := cbl + 1; fk[i]; i++ {
-		cbl += 1
-		delete(fk, i)
+	for i := a.highWatermark + 1; a.futureKnowledge[i]; i++ {
+		a.highWatermark += 1
+		delete(a.futureKnowledge, i)
 	}
 
-	return cbl != originlCbl
+	return a.highWatermark != originlCbl
 }
 
 func (a *analyzer) tryReleaseIdpTxs() {
-	cbl := <-a.currentBlock
 	blocked := <-a.blockedTxsPerBlock
-	for blockNum, txs := range blocked {
-		if blockNum > cbl {
-			continue
-		}
-
-		for txID, tx := range txs {
-			deps := <-tx.dependencies
-			depCount := len(deps)
-			tx.dependencies <- deps
-			if depCount != 0 {
-				continue
-			}
-
-			ctx := <-a.committingTxs
-			if _, ok := ctx[tx.TxID]; !ok {
-				ctx[tx.TxID] = tx
-				a.committingTxs <- ctx
-
-				opb := <-a.outputPerBlock
-				opb[tx.Version.BlockNum] <- tx
-
-				delete(blocked[blockNum], txID)
-				if len(blocked[blockNum]) == 0 {
-					delete(blocked, blockNum)
-					close(opb[tx.Version.BlockNum])
-				}
-
-				a.outputPerBlock <- opb
-			} else {
-				a.committingTxs <- ctx
+	for i := a.lowWatermark; i <= a.highWatermark; i++ {
+		if txs, ok := blocked[i]; ok {
+			for _, tx := range txs {
+				a.blockedTxsPerBlock <- blocked
+				a.tryRelease(tx)
+				blocked = <-a.blockedTxsPerBlock
 			}
 		}
 	}
 
 	a.blockedTxsPerBlock <- blocked
-	a.currentBlock <- cbl
 }
 
-func (a *analyzer) tryRelease(transaction *Transaction) {
-	deps := <-transaction.dependencies
-	if len(deps) == 0 {
-		a.release(transaction)
+func (a *analyzer) tryRelease(tx *Transaction) {
+	if len(tx.dependencies) != 0 {
+		return
 	}
-	transaction.dependencies <- deps
+
+	if _, ok := a.committingTxs[tx.TxID]; !ok {
+		a.committingTxs[tx.TxID] = tx
+
+		a.outputLock.RLock()
+		output := a.outputPerBlock[tx.Version.BlockNum]
+		a.outputLock.RUnlock()
+		output <- tx
+		btx := <-a.blockedTxsPerBlock
+		delete(btx[tx.Version.BlockNum], tx.TxID)
+		if len(btx[tx.Version.BlockNum]) == 0 {
+			delete(btx, tx.Version.BlockNum)
+			if a.lowWatermark < tx.Version.BlockNum {
+				a.lowWatermark = tx.Version.BlockNum
+			}
+			close(output)
+		}
+		a.blockedTxsPerBlock <- btx
+	}
+}
+
+func (a *analyzer) release(tx *Transaction) {
+
 }
 
 type Transaction struct {
 	Version      *version.Height
 	Payload      *cached.Payload
 	TxID         string
-	dependencies chan map[string]*Transaction
+	dependencies map[string]*Transaction
 
 	RwSet          *cached.TxRwSet
 	ValidationCode peer.TxValidationCode
@@ -309,14 +262,12 @@ func NewTransaction(blockNum uint64, txNum uint64, payload *cached.Payload) (*Tr
 	}
 
 	txType := common.HeaderType(chdr.Type)
-	deps := make(chan map[string]*Transaction, 1)
-	deps <- map[string]*Transaction{}
 	if txType != common.HeaderType_ENDORSER_TRANSACTION {
 		return &Transaction{Version: &version.Height{BlockNum: blockNum, TxNum: txNum},
 			TxID:         chdr.TxId,
 			Payload:      payload,
 			RwSet:        nil,
-			dependencies: deps,
+			dependencies: map[string]*Transaction{},
 		}, nil
 	}
 
@@ -336,28 +287,22 @@ func NewTransaction(blockNum uint64, txNum uint64, payload *cached.Payload) (*Tr
 		TxID:         chdr.TxId,
 		Payload:      payload,
 		RwSet:        rwset,
-		dependencies: deps}, nil
+		dependencies: map[string]*Transaction{}}, nil
 
 }
 
 func (tx *Transaction) addDependency(other *Transaction) {
-	deps := <-tx.dependencies
-	defer func() { tx.dependencies <- deps }()
-
-	if _, ok := deps[other.TxID]; other == tx || ok {
+	if other == tx {
 		return
 	}
 
-	deps[other.TxID] = other
+	tx.dependencies[other.TxID] = other
 }
 
 func (tx *Transaction) removeDependency(other *Transaction) {
-	deps := <-tx.dependencies
-	delete(deps, other.TxID)
-	tx.dependencies <- deps
+	delete(tx.dependencies, other.TxID)
 }
 
-// ContainsPvtWrites returns true if this transaction is not limited to affecting the public data only
 func (t *Transaction) ContainsPvtWrites() bool {
 	for _, ns := range t.RwSet.NsRwSets {
 		for _, coll := range ns.CollHashedRwSets {
