@@ -79,3 +79,8 @@ typings/
 wallet
 !wallet/.gitkeep
 /invoke.js
+/rsync.ignore
+/package-lock.json
+/.eslintrc.js
+/.eslintignore
+/.editorconfig

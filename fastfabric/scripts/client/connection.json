@@ -35,12 +35,12 @@
     },
     "orderers": {
         "address": {
-            "url": "grpc://ADRESS:7050"
+            "url": "grpc://ADDRESS:7050"
         }
     },
     "peers": {
         "address": {
-            "url": "grpc://ADRESS:7051"
+            "url": "grpc://ADDRESS:7051"
         }
     }
 }

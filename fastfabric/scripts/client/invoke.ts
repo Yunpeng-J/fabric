@@ -7,24 +7,29 @@
 import { FileSystemWallet, Gateway } from 'fabric-network';
 import fs from 'fs';
 import path from 'path';
-// import { Semaphore } from 'await-semaphore';
-
-const user = "Admin@" + process.env.PEER_DOMAIN
+import exec from 'child_process'
 
 async function main() {
     var conflictPercentage = parseInt(process.argv[6])
-    var endorserIdx = process.argv[5]
+    var endorserIdx = parseInt(process.argv[5])
     var repetitions = parseInt(process.argv[4]);
     var transferCount = parseInt(process.argv[3]);
     var iteration = parseInt(process.argv[2]);
     var bcResps: Array<Promise<Buffer>> = [];
 
-    var confPath = process.env.ENDORSER_ADDRESS
-
     var ccpPath = path.resolve(__dirname, 'connection.json');
     const ccpJSON = fs.readFileSync(ccpPath, 'utf8');
     const ccp = JSON.parse(ccpJSON);
-    console.log(ccp.peers.localhost)
+
+    var endorserAddresses =exec.execSync("bash printEndorsers.sh").toString().replace("\n","").split(" ")
+
+    ccp.name = ccp.name.replace("CHANNEL", process.env.CHANNEL)
+    console.log(ccp.organizations.Org1.signedCert.path.split("DOMAIN").join(process.env.PEER_DOMAIN))
+    ccp.organizations.Org1.signedCert.path = ccp.organizations.Org1.signedCert.path.split("DOMAIN").join(process.env.PEER_DOMAIN)
+    ccp.orderers.address.url = ccp.orderers.address.url.replace("ADDRESS", process.env.ORDERER_ADDRESS)
+    ccp.peers.address.url = ccp.peers.address.url.replace("ADDRESS", endorserAddresses[endorserIdx])
+    const user = "Admin@" + process.env.PEER_DOMAIN
+    console.log(ccp)
     console.log(`Thread no.: ${iteration},\tTx per process: ${transferCount / 2},\trepetitions: ${repetitions}`);
     // Create a new file system based wallet for managing identities.
     const walletPath = path.join(__dirname, './wallet');
