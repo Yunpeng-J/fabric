@@ -1,11 +1,14 @@
 package dependency
 
 import (
+	"fmt"
 	"github.com/gogo/protobuf/proto"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric/protos/peer"
+	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -292,6 +295,61 @@ func Test_MultipleBlocks_OutOfOrder(t *testing.T) {
 	if count != 6 {
 		t.Errorf("Expected 6 total txs, got %v", count)
 	}
+}
+
+func Test_ManyBlocks_AllToSameKey(t *testing.T) {
+	reads := []*kvrwset.KVRead{{Key: "key1", Version: &kvrwset.Version{BlockNum: 1, TxNum: 0}},
+		{Key: "key2", Version: &kvrwset.Version{BlockNum: 1, TxNum: 10}}}
+	writes := []*kvrwset.KVWrite{{Key: "key1", Value: []byte("value1")},
+		{Key: "key2", Value: []byte("value2")}}
+
+	blocks := []*common.Block{}
+
+	for i := 0; i < 100; i++ {
+		txs := [][]byte{}
+		for j := 0; j < 100; j++ {
+			txs = append(txs, createTxBytes("txID_"+strconv.Itoa(i)+"_"+strconv.Itoa(j), "chaincode", reads, writes))
+		}
+		blocks = append(blocks, createBlock(uint64(i),
+			txs))
+	}
+
+	analyzer := NewAnalyzer()
+	output := make(chan (<-chan *Transaction), len(blocks))
+	go func() {
+		for _, block := range blocks {
+			o, err := analyzer.Analyze(cached.WrapBlock(block))
+			if err != nil {
+				t.Error(err)
+			}
+			output <- o
+		}
+		close(output)
+	}()
+
+	errChan := make(chan error, len(blocks))
+	wg := &sync.WaitGroup{}
+	wg.Add(len(blocks))
+	for o := range output {
+		go func(wg *sync.WaitGroup) {
+			defer wg.Done()
+			txCount := 0
+			for tx := range o {
+				analyzer.NotifyAboutCommit(tx)
+				txCount++
+			}
+			if txCount != 100 {
+				errChan <- fmt.Errorf("Got txCount: %d", txCount)
+			}
+		}(wg)
+	}
+	wg.Wait()
+	select {
+	case err := <-errChan:
+		t.Error(err)
+	default:
+	}
+
 }
 
 func createBlock(blockNum uint64, txs [][]byte) *common.Block {

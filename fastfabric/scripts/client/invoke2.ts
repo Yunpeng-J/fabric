@@ -4,7 +4,8 @@
 
 'use strict';
 
-import { FileSystemWallet, Gateway } from 'fabric-network';
+import { FileSystemWallet, Gateway} from 'fabric-network';
+import {ProposalResponseObject,ProposalResponse} from 'fabric-network/node_modules/fabric-client'
 import fs from 'fs';
 import path from 'path';
 import exec from 'child_process'
@@ -15,7 +16,7 @@ async function main() {
     var repetitions = parseInt(process.argv[4]);
     var transferCount = parseInt(process.argv[3]);
     var iteration = parseInt(process.argv[2]);
-    var bcResps: Array<Promise<Buffer>> = [];
+    var bcResps: Array<ProposalResponseObject> = [];
 
     var ccpPath = path.resolve(__dirname, 'connection.json');
     const ccpJSON = fs.readFileSync(ccpPath, 'utf8');
@@ -28,11 +29,11 @@ async function main() {
     ccp.orderers.address.url = ccp.orderers.address.url.replace("ADDRESS", process.env.ORDERER_ADDRESS)
     ccp.peers.address.url = ccp.peers.address.url.replace("ADDRESS", endorserAddresses[endorserIdx])
     const user = "Admin@" + process.env.PEER_DOMAIN
-
     console.log(`Thread no.: ${iteration},\tTx per process: ${transferCount / 2},\trepetitions: ${repetitions}`);
     // Create a new file system based wallet for managing identities.
     const walletPath = path.join(__dirname, './wallet');
     const wallet = new FileSystemWallet(walletPath);
+    var tIdx = 0
     try {
 
         // Check to see if we've already enrolled the user.
@@ -49,32 +50,48 @@ async function main() {
 
         // Get the network (channel) our contract is deployed to.
         var network = await gateway.getNetwork(String(process.env.CHANNEL));
-
-        var contract = network.getContract(String(process.env.CHAINCODE))
+        var channel  = network.getChannel()
+        var client = gateway.getClient()
 
 
         // Submit the specified transaction.
 
         for (var r = 0; r < repetitions; r++) {
             for (var i = iteration * transferCount; i < iteration * transferCount + transferCount - 1; i += 2) {
+                var a
                 if (Math.random() <= conflictPercentage / 100) {
-                    bcResps.push(
-                        contract.submitTransaction("transfer", "account0", "account1", "1"))
+                    a = ["account0", "account1", "1"]
                 } else {
-                    bcResps.push(
-                        contract.submitTransaction("transfer", "account".concat(i.toString()), "account".concat((i + 1).toString()), "1"))
+                    a = ["account".concat(i.toString()), "account".concat((i + 1).toString()), "1"]
                 }
+                
+                var resp = await channel.sendTransactionProposal({
+                    chaincodeId: String(process.env.CHAINCODE),
+                    fcn: "transfer",
+                    args: a,
+                    txId: client.newTransactionID()
+                });
+                bcResps.push(resp);
             }
         }
+        console.log(`Thread ${iteration}: Endorsement done, got ${bcResps.length} endorsments for ${transferCount / 2 * repetitions} transactions`)
+
+        console.log(`Thread ${iteration}: Start sending transactions`);
+
         for (let i = 0; i < bcResps.length; i++) {
-            await bcResps[i]
+            var propResp = <ProposalResponse[]>(bcResps[i][0]);
+            var res = await channel.sendTransaction({ proposalResponses: propResp, proposal: bcResps[i][1] });
+            if (res.status != "SUCCESS") {
+                console.log(`Thread ${iteration}: ${res.status}`);
+            }
+            tIdx++
         }
 
         // Disconnect from the gateway.
         await gateway.disconnect();
         console.log(`Thread ${iteration} is done!`);
     } catch (error) {
-        console.error(`Thread ${iteration}: Failed to submit transaction: ${error}`);
+        console.error(`Thread ${iteration}: Failed to submit transaction ${tIdx}: ${error}`);
         process.exit(1);
     }
 }

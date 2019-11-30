@@ -18,7 +18,7 @@ type analyzer struct {
 	futureKnowledge    map[uint64]bool
 	outputPerBlock     map[uint64]chan *Transaction
 	outputLock         sync.RWMutex
-	blockedTxsPerBlock chan map[uint64]map[string]*Transaction
+	blockedTxsPerBlock chan map[uint64]map[uint64]*Transaction
 	committedTxs       chan *Transaction
 
 	done          chan bool
@@ -53,10 +53,10 @@ func NewAnalyzer() Analyzer {
 		committedTxs:       make(chan *Transaction, 1000),
 		done:               make(chan bool),
 		committingTxs:      make(map[string]*Transaction),
-		blockedTxsPerBlock: make(chan map[uint64]map[string]*Transaction, 1),
+		blockedTxsPerBlock: make(chan map[uint64]map[uint64]*Transaction, 1),
 		input:              make(chan uint64, 5),
 	}
-	a.blockedTxsPerBlock <- make(map[uint64]map[string]*Transaction)
+	a.blockedTxsPerBlock <- make(map[uint64]map[uint64]*Transaction)
 	go func() {
 		for {
 			select {
@@ -66,8 +66,10 @@ func NewAnalyzer() Analyzer {
 				}
 			case committedTx := <-a.committedTxs:
 				a.removeDependencies(committedTx)
-
 			case blockNum := <-a.input:
+				for len(a.committedTxs) > 0 {
+					a.removeDependencies(<-a.committedTxs)
+				}
 				blocks := <-a.blockedTxsPerBlock
 				for _, t := range blocks[blockNum] {
 					a.addDependencies(t)
@@ -88,7 +90,7 @@ func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	txs := map[string]*Transaction{}
+	txs := map[uint64]*Transaction{}
 	for txNum, env := range envs {
 		pl, err := env.UnmarshalPayload()
 		if err != nil {
@@ -99,7 +101,7 @@ func (a *analyzer) Analyze(b *cached.Block) (<-chan *Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		txs[t.TxID] = t
+		txs[t.Version.TxNum] = t
 	}
 
 	output := make(chan *Transaction, len(txs))
@@ -149,6 +151,7 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 	if tx.RwSet == nil {
 		return
 	}
+	txsToRelease := map[string]*Transaction{}
 	for _, set := range tx.RwSet.NsRwSets {
 		for _, w := range set.KvRwSet.Writes {
 			compKey := constructCompositeKey(set.NameSpace, w.Key)
@@ -157,7 +160,7 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 			first := list.First()
 			if first != nil {
 				for _, el := range first.elements {
-					a.tryRelease(el.Transaction)
+					txsToRelease[el.Transaction.TxID] = el.Transaction
 				}
 			}
 		}
@@ -168,9 +171,13 @@ func (a *analyzer) removeDependencies(tx *Transaction) {
 			first := list.First()
 			if first != nil {
 				for _, el := range first.elements {
-					a.tryRelease(el.Transaction)
+					txsToRelease[el.Transaction.TxID] = el.Transaction
 				}
 			}
+		}
+
+		for _, tx := range txsToRelease {
+			a.tryRelease(tx)
 		}
 	}
 }
@@ -220,7 +227,7 @@ func (a *analyzer) tryRelease(tx *Transaction) {
 		a.outputLock.RUnlock()
 		output <- tx
 		btx := <-a.blockedTxsPerBlock
-		delete(btx[tx.Version.BlockNum], tx.TxID)
+		delete(btx[tx.Version.BlockNum], tx.Version.TxNum)
 		if len(btx[tx.Version.BlockNum]) == 0 {
 			delete(btx, tx.Version.BlockNum)
 			if a.lowWatermark < tx.Version.BlockNum {
@@ -230,10 +237,6 @@ func (a *analyzer) tryRelease(tx *Transaction) {
 		}
 		a.blockedTxsPerBlock <- btx
 	}
-}
-
-func (a *analyzer) release(tx *Transaction) {
-
 }
 
 type Transaction struct {

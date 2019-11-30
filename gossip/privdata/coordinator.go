@@ -8,12 +8,14 @@ package privdata
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/dependency"
 	"github.com/hyperledger/fabric/fastfabric/stopwatch"
+	"golang.org/x/sync/semaphore"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -125,6 +127,7 @@ type coordinator struct {
 	transientBlockRetention uint64
 	metrics                 *metrics.PrivdataMetrics
 	pullRetryThreshold      time.Duration
+	pipelineSemaphore       *semaphore.Weighted
 }
 
 type CoordinatorConfig struct {
@@ -137,7 +140,7 @@ func NewCoordinator(support Support, selfSignedData common.SignedData, metrics *
 	config CoordinatorConfig) Coordinator {
 	return &coordinator{Support: support, selfSignedData: selfSignedData,
 		transientBlockRetention: config.TransientBlockRetention, metrics: metrics,
-		pullRetryThreshold: config.PullRetryThreshold}
+		pullRetryThreshold: config.PullRetryThreshold, pipelineSemaphore: semaphore.NewWeighted(10)}
 }
 
 func (c *coordinator) Close() {
@@ -164,6 +167,7 @@ func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDa
 
 	errAnalyze := make(chan error, 1)
 	var unblockedTx <-chan *dependency.Transaction
+	c.pipelineSemaphore.Acquire(context.Background(), 1)
 	go func() {
 		var err error
 		unblockedTx, err = c.Analyze(block)
@@ -291,6 +295,7 @@ func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDa
 		commitStart := time.Now()
 		committedTxs := make(chan *dependency.Transaction, len(blockAndPvtData.Block.Data.Data))
 		go func() {
+			defer c.pipelineSemaphore.Release(1)
 			for tx := range committedTxs {
 				c.NotifyAboutCommit(tx)
 			}
