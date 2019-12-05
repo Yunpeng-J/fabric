@@ -191,6 +191,10 @@ func (v *Validator) validateTx(tx *dependency.Transaction, updates *internalVal.
 	// Uncomment the following only for local debugging. Don't want to print data in the logs in production
 	//logger.Debugf("validateTx - validating txRWSet: %s", spew.Sdump(txRWSet))
 
+	if config.IsStorage || config.IsEndorser {
+		return tx.ValidationCode, nil
+	}
+
 	for _, nsRWSet := range tx.RwSet.NsRwSets {
 		ns := nsRWSet.NameSpace
 
