@@ -7,5 +7,5 @@ accountCount=$6
 totalThreads=$3
 for i in $(seq $offset $(($threadCount-1)))
 do
-    node ./invoke.js $i $(($accountCount/$totalThreads)) 1 $target $conflictPercentage&
+    node ./invoke2.js $i $(($accountCount/$totalThreads)) 1 $target $conflictPercentage&
 done
