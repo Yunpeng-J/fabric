@@ -1,0 +1,45 @@
+language: go
+sudo: false
+dist: trusty
+
+os:
+  - linux
+
+env:
+ - TAGS="-tags travis"
+
+matrix:
+ fast_finish: true
+ allow_failures:
+   - go: master
+ include:
+   - go: 1.9.x
+     env:
+       - TAGS="-tags travis"
+   - go: 1.10.x
+     env:
+       - TAGS="-tags travis"
+   - go: 1.11.x
+     env:
+       - TAGS="-tags travis"
+       - COVERAGE="-cover"
+   - go: master
+     env:
+       - TAGS="-tags travis"
+       - GO111MODULE=on
+
+cache:
+  directories:
+    - $HOME/bin/python3.4
+
+before_install:
+  - ./bin/install-python.sh $HOME/bin/python3.4
+
+script:
+ - go install -v $TAGS ./...
+ - GOARCH=386   go test $TAGS ./...
+ - GOARCH=amd64 go run ./ci/run-tests.go -race $TAGS $COVERAGE
+ - python3 py3test.py
+
+after_success:
+ - bash <(curl -s https://codecov.io/bash)

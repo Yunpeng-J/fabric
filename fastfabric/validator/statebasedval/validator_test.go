@@ -27,6 +27,7 @@ func TestReExecution(t *testing.T) {
 	mockDB.GetStateStub = getstate
 	db, _ := privacyenabledstate.NewCommonStorageDB(mockDB, "", nil)
 
+	codePath = "../../chaincode/contract.py"
 	v := NewValidator(db)
 
 	pb, _ := proto.Marshal(&peer.ChaincodeInvocationSpec{ChaincodeSpec: &peer.ChaincodeSpec{Input: &peer.ChaincodeInput{Args: [][]byte{[]byte("account0"), []byte("account1"), []byte("20")}}}})
@@ -37,7 +38,7 @@ func TestReExecution(t *testing.T) {
 		Payload: &common.Payload{Data: pb},
 		Header:  nil,
 	}
-	val := executeChaincode("../../chaincode/contract.py", &dependency.Transaction{
+	val := v.executeChaincode(&dependency.Transaction{
 		Payload: pl,
 		RwSet: &cached.TxRwSet{
 			NsRwSets: []*cached.NsRwSet{{NameSpace: "benchmark",

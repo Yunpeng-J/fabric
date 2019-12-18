@@ -43,6 +43,8 @@ type Validator struct {
 	executeLock   sync.Mutex
 }
 
+var codePath = "../chaincode/contract.py"
+
 // NewValidator constructs StateValidator
 func NewValidator(db privacyenabledstate.DB) *Validator {
 	ui := &mockUI{}
@@ -55,7 +57,7 @@ func NewValidator(db privacyenabledstate.DB) *Validator {
 	validator.validatedKeys <- make(map[string]*version.Height)
 	validator.vm.SetUI(ui)
 
-	data, err := ioutil.ReadFile("../chaincode/contract.py")
+	data, err := ioutil.ReadFile(codePath)
 	if err != nil {
 		logger.Fatal(err)
 	}
