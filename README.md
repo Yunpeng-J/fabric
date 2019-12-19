@@ -13,7 +13,7 @@ This is a proof of concept and not meant to be used in a production setting. Hel
 - `$GOPATH` and `$GOPATH/bin` are added to `$PATH`
 - The instructions assume that the repository is cloned to `$GOPATH/src/github.com/hyperledger/fabric`
 - Add the `cryptogen`and `configtxgen` binaries to a new `$GOPATH/src/github.com/hyperledger/fabric/fastfabric/scripts/bin` folder
-- Ensure that you install docker images created from this repo, otherwise the `PutOracle`command in the chaincode will not be recognized. Use `make docker-clean` and `make docker` in the main repository folder to achieve this.
+- Ensure that you install docker images created from this repo, otherwise the `PutOracle`command in the chaincode will not be recognized. Remove old fabric docker images first and then call `make docker` in the main repository folder.
 
 ## Network Setup Instructions
 
