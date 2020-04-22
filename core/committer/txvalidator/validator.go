@@ -14,7 +14,6 @@ import (
 
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/configtx"
-	commonerrors "github.com/hyperledger/fabric/common/errors"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/chaincode/platforms"
 	"github.com/hyperledger/fabric/core/chaincode/platforms/golang"
@@ -337,33 +336,6 @@ func (v *TxValidator) validateTx(req *blockValidationRequest, results chan<- *bl
 				return
 			}
 
-			// Validate tx with vscc and policy
-			logger.Debug("Validating transaction vscc tx validate")
-			err, cde := v.Vscc.VSCCValidateTx(tIdx, payload, block.Data.Data[tIdx], block)
-			if err != nil {
-				logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
-				switch err.(type) {
-				case *commonerrors.VSCCExecutionFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
-					}
-					return
-				case *commonerrors.VSCCInfoLookupFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
-					}
-					return
-				default:
-					results <- &blockValidationResult{
-						tIdx:           tIdx,
-						validationCode: cde,
-					}
-					return
-				}
-			}
-
 			invokeCC, upgradeCC, err := v.getTxCCInstance(payload)
 			if err != nil {
 				logger.Errorf("Get chaincode instance from transaction txId = %s returned error: %+v", txID, err)
@@ -378,35 +350,7 @@ func (v *TxValidator) validateTx(req *blockValidationRequest, results chan<- *bl
 				logger.Infof("Find chaincode upgrade transaction for chaincode %s on channel %s with new version %s", upgradeCC.ChaincodeName, upgradeCC.ChainID, upgradeCC.ChaincodeVersion)
 				txsUpgradedChaincode = upgradeCC
 			}
-			// FAB-12971 comment out below block before v1.4 cut. Will uncomment after v1.4.
-			/*
-				} else if common.HeaderType(chdr.Type) == common.HeaderType_TOKEN_TRANSACTION {
 
-					txID = chdr.TxId
-					if !v.Support.Capabilities().FabToken() {
-						logger.Errorf("FabToken capability is not enabled. Unsupported transaction type [%s] in block [%d] transaction [%d]",
-							common.HeaderType(chdr.Type), block.Header.Number, tIdx)
-						results <- &blockValidationResult{
-							tIdx:           tIdx,
-							validationCode: peer.TxValidationCode_UNSUPPORTED_TX_PAYLOAD,
-						}
-						return
-					}
-
-					// Check if there is a duplicate of such transaction in the ledger and
-					// obtain the corresponding result that acknowledges the error type
-					erroneousResultEntry := v.checkTxIdDupsLedger(tIdx, chdr, v.Support.Ledger())
-					if erroneousResultEntry != nil {
-						results <- erroneousResultEntry
-						return
-					}
-
-					// Set the namespace of the invocation field
-					txsChaincodeName = &sysccprovider.ChaincodeInstance{
-						ChainID:          channel,
-						ChaincodeName:    "Token",
-						ChaincodeVersion: ""}
-			*/
 		} else if common.HeaderType(chdr.Type) == common.HeaderType_CONFIG {
 			configEnvelope, err := configtx.UnmarshalConfigEnvelope(payload.Data)
 			if err != nil {

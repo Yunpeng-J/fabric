@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+import "common/common.proto";
+import "peer/transaction.proto";
+
+package preorderval;
+
+message SysCC {
+ string Name =1;
+ bool InvokableCC2CC =2;
+ bool InvokableExternal=3;
+}
+
+message Chain {
+    string Name =1;
+}
+
+service preordervalidator {
+    rpc SetSysCC(SysCC) returns (Result) {};
+    rpc SetChain(Chain) returns (Result) {};
+    rpc SetCCDefs(CCDef) returns (Result) {};
+    rpc Validate(common.Envelope) returns (ValidationResult){};
+}
+
+message CCDef{
+    bytes data = 1;
+}
+
+message Result {
+}
+
+message ValidationResult{
+    protos.TxValidationCode Code =1;
+}

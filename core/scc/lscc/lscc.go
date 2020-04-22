@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package lscc
 
 import (
+	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"regexp"
 
 	"github.com/golang/protobuf/proto"
@@ -139,17 +141,19 @@ type LifeCycleSysCC struct {
 	Support FilesystemSupport
 
 	PlatformRegistry *platforms.Registry
+	validatorClient  validator.PreordervalidatorClient
 }
 
 // New creates a new instance of the LSCC
 // Typically there is only one of these per peer
-func New(sccp sysccprovider.SystemChaincodeProvider, ACLProvider aclmgmt.ACLProvider, platformRegistry *platforms.Registry) *LifeCycleSysCC {
+func New(sccp sysccprovider.SystemChaincodeProvider, ACLProvider aclmgmt.ACLProvider, platformRegistry *platforms.Registry, val validator.PreordervalidatorClient) *LifeCycleSysCC {
 	return &LifeCycleSysCC{
 		Support:          &supportImpl{},
 		PolicyChecker:    policyprovider.GetPolicyChecker(),
 		SCCProvider:      sccp,
 		ACLProvider:      ACLProvider,
 		PlatformRegistry: platformRegistry,
+		validatorClient:  val,
 	}
 }
 
@@ -554,6 +558,18 @@ func (lscc *LifeCycleSysCC) executeInstall(stub shim.ChaincodeStubInterface, ccb
 	ccpack, err := ccprovider.GetCCPackage(ccbytes)
 	if err != nil {
 		return err
+	}
+
+	if lscc.validatorClient != nil {
+		ccData := ccpack.GetChaincodeData()
+		raw, err := proto.Marshal(ccData)
+		if err != nil {
+			panic(err)
+		}
+		_, err = lscc.validatorClient.SetCCDefs(context.Background(), &validator.CCDef{Data: raw})
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	cds := ccpack.GetDepSpec()

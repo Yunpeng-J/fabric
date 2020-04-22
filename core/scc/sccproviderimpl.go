@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package scc
 
 import (
+	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/policies"
@@ -16,11 +18,12 @@ import (
 )
 
 // NewProvider creates a new Provider instance
-func NewProvider(pOps peer.Operations, pSup peer.Support, r Registrar) *Provider {
+func NewProvider(pOps peer.Operations, pSup peer.Support, r Registrar, v validator.PreordervalidatorClient) *Provider {
 	return &Provider{
 		Peer:        pOps,
 		PeerSupport: pSup,
 		Registrar:   r,
+		validator:   v,
 	}
 }
 
@@ -30,10 +33,19 @@ type Provider struct {
 	PeerSupport peer.Support
 	Registrar   Registrar
 	SysCCs      []SelfDescribingSysCC
+	validator   validator.PreordervalidatorClient
 }
 
 // RegisterSysCC registers a system chaincode with the syscc provider.
 func (p *Provider) RegisterSysCC(scc SelfDescribingSysCC) {
+	sysCC := &validator.SysCC{Name: scc.Name(), InvokableCC2CC: scc.InvokableCC2CC(), InvokableExternal: scc.InvokableExternal()}
+	if p.validator != nil {
+		_, err := p.validator.SetSysCC(context.Background(), sysCC)
+
+		if err != nil {
+			sysccLogger.Panicf("Could not register system chaincode: %s", err)
+		}
+	}
 	p.SysCCs = append(p.SysCCs, scc)
 	_, err := p.registerSysCC(scc)
 	if err != nil {

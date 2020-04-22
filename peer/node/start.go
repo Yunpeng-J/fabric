@@ -8,6 +8,7 @@ package node
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"github.com/hyperledger/fabric/fastfabric/remote"
 	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"log"
@@ -118,6 +119,7 @@ func startCmd() *cobra.Command {
 	flags.BoolVarP(&ffconfig.IsBenchmark, "isBenchmark", "b", false, "Runs the peer in benchmarking mode. Times between block commits are logged to the file specified with the --output (-o) flag.")
 	flags.StringVarP(&benchmarkOutput, "output", "o", "benchmark.log", "Specifies the benchmark out put location.")
 	flags.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
+	flags.StringVar(&validator.ValidatorAddress, "validatorAddr", "", "The address of the decoupled endorsement policy validator")
 
 	return nodeStartCmd
 }
@@ -182,6 +184,15 @@ func serve(args []string) error {
 		defer pprof.StopCPUProfile()
 	}
 
+	var val validator.PreordervalidatorClient
+	var err error
+	if validator.ValidatorAddress != "" {
+		val, err = validator.StartValidatorClient(validator.ValidatorAddress)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	// currently the peer only works with the standard MSP
 	// because in certain scenarios the MSP has to make sure
 	// that from a single credential you only have a single 'identity'.
@@ -220,7 +231,7 @@ func serve(args []string) error {
 	}
 
 	opsSystem := newOperationsSystem()
-	err := opsSystem.Start()
+	err = opsSystem.Start()
 	if err != nil {
 		return errors.WithMessage(err, "failed to initialize operations subystems")
 	}
@@ -323,7 +334,7 @@ func serve(args []string) error {
 	pb.RegisterDeliverServer(peerServer.Server(), abServer)
 
 	// Initialize chaincode service
-	chaincodeSupport, ccp, sccp, packageProvider := startChaincodeServer(peerHost, aclProvider, pr, opsSystem)
+	chaincodeSupport, ccp, sccp, packageProvider := startChaincodeServer(peerHost, aclProvider, pr, opsSystem, val)
 
 	logger.Debugf("Running peer")
 
@@ -693,6 +704,7 @@ func registerChaincodeSupport(
 	pr *platforms.Registry,
 	lifecycleSCC *lifecycle.SCC,
 	ops *operations.System,
+	val validator.PreordervalidatorClient,
 ) (*chaincode.ChaincodeSupport, ccprovider.ChaincodeProvider, *scc.Provider) {
 	//get user mode
 	userRunsCC := chaincode.IsDevMode()
@@ -701,8 +713,8 @@ func registerChaincodeSupport(
 	authenticator := accesscontrol.NewAuthenticator(ca)
 	ipRegistry := inproccontroller.NewRegistry()
 
-	sccp := scc.NewProvider(peer.Default, peer.DefaultSupport, ipRegistry)
-	lsccInst := lscc.New(sccp, aclProvider, pr)
+	sccp := scc.NewProvider(peer.Default, peer.DefaultSupport, ipRegistry, val)
+	lsccInst := lscc.New(sccp, aclProvider, pr, val)
 
 	dockerProvider := dockercontroller.NewProvider(
 		viper.GetString("peer.id"),
@@ -770,6 +782,7 @@ func startChaincodeServer(
 	aclProvider aclmgmt.ACLProvider,
 	pr *platforms.Registry,
 	ops *operations.System,
+	val validator.PreordervalidatorClient,
 ) (*chaincode.ChaincodeSupport, ccprovider.ChaincodeProvider, *scc.Provider, *persistence.PackageProvider) {
 	// Setup chaincode path
 	chaincodeInstallPath := ccprovider.GetChaincodeInstallPathFromViper()
@@ -812,6 +825,7 @@ func startChaincodeServer(
 		pr,
 		lifecycleSCC,
 		ops,
+		val,
 	)
 	go ccSrv.Start()
 	return chaincodeSupport, ccp, sccp, packageProvider

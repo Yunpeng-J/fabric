@@ -8,6 +8,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"io/ioutil"
 	"os"
 	"runtime/debug"
@@ -72,12 +73,17 @@ func (rs *responseSender) SendBlockResponse(block *cb.Block) error {
 }
 
 // NewServer creates an ab.AtomicBroadcastServer based on the broadcast target and ledger Reader
-func NewServer(r *multichannel.Registrar, metricsProvider metrics.Provider, debug *localconfig.Debug, timeWindow time.Duration, mutualTLS bool) ab.AtomicBroadcastServer {
+func NewServer(r *multichannel.Registrar, metricsProvider metrics.Provider, debug *localconfig.Debug, timeWindow time.Duration, mutualTLS bool, validatorAddress string) ab.AtomicBroadcastServer {
+	client, err := validator.StartValidatorClient(validatorAddress)
+	if err != nil {
+		panic(err)
+	}
 	s := &server{
 		dh: deliver.NewHandler(deliverSupport{Registrar: r}, timeWindow, mutualTLS, deliver.NewMetrics(metricsProvider)),
 		bh: &broadcast.Handler{
 			SupportRegistrar: broadcastSupport{Registrar: r},
 			Metrics:          broadcast.NewMetrics(metricsProvider),
+			Validator:        client,
 		},
 		debug:     debug,
 		Registrar: r,

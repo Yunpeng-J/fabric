@@ -7,6 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package broadcast
 
 import (
+	"context"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
+	"github.com/hyperledger/fabric/protos/peer"
 	"io"
 	"time"
 
@@ -60,6 +63,7 @@ type Consenter interface {
 type Handler struct {
 	SupportRegistrar ChannelSupportRegistrar
 	Metrics          *Metrics
+	Validator        validator.PreordervalidatorClient
 }
 
 // Handle reads requests from a Broadcast stream, processes them, and returns the responses to the stream
@@ -67,8 +71,8 @@ func (bh *Handler) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 	addr := util.ExtractRemoteAddress(srv.Context())
 	logger.Debugf("Starting new broadcast loop for %s", addr)
 
-	msgs := make(chan *cb.Envelope, 1000)
 	var err error
+	msgs := make(chan *cb.Envelope, 1000)
 	go func() {
 		defer close(msgs)
 		for {
@@ -182,6 +186,12 @@ func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.Broad
 			logger.Warningf("[channel: %s] Rejecting broadcast of normal message from %s because of error: %s", chdr.ChannelId, addr, err)
 			return &ab.BroadcastResponse{Status: ClassifyError(err), Info: err.Error()}
 		}
+		if cb.HeaderType(chdr.Type) == cb.HeaderType_ENDORSER_TRANSACTION {
+			if result, err := bh.Validator.Validate(context.Background(), msg); err != nil || result.Code != peer.TxValidationCode_VALID {
+				return &ab.BroadcastResponse{Status: cb.Status_BAD_REQUEST, Info: "Tx did not adhere to endorsement policy"}
+			}
+		}
+
 		tracker.EndValidate()
 
 		tracker.BeginEnqueue()

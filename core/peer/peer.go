@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package peer
 
 import (
+	"context"
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"net"
 	"runtime"
 	"sync"
@@ -433,6 +435,18 @@ func CreateChainFromBlock(cb *common.Block, ccp ccprovider.ChaincodeProvider, sc
 	cid, err := utils.GetChainIDFromBlock(cb)
 	if err != nil {
 		return err
+	}
+
+	var val validator.PreordervalidatorClient
+	if validator.ValidatorAddress != "" {
+		val, err = validator.StartValidatorClient(validator.ValidatorAddress)
+		if err != nil {
+			panic(err)
+		}
+		_, err = val.SetChain(context.Background(), &validator.Chain{Name: cid})
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	var l ledger.PeerLedger

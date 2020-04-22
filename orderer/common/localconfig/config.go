@@ -189,8 +189,9 @@ type Debug struct {
 
 // Operations configures the operations endpont for the orderer.
 type Operations struct {
-	ListenAddress string
-	TLS           TLS
+	ListenAddress    string
+	TLS              TLS
+	ValidatorAddress string
 }
 
 // Operations confiures the metrics provider for the orderer.

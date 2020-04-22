@@ -24,5 +24,12 @@ then
     s="--storageAddr $(get_correct_peer_address ${STORAGE_ADDRESS}):10000"
 fi
 
-peer node start ${s}
+v=""
+if [[ ! -z ${STORAGE_ADDRESS} ]]
+then
+    echo "Starting with decoupled validation server ${VALIDATION_ADDRESS}"
+    v="--validatorAddr $(get_correct_peer_address ${VALIDATION_ADDRESS}):11000"
+fi
+
+peer node start ${s} ${v}
 
