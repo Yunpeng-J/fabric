@@ -15,6 +15,7 @@
 #   - idemixgen  -  builds a native idemixgen binary
 #   - peer - builds a native fabric peer binary
 #   - orderer - builds a native fabric orderer binary
+#   - preorderval - build a native pre-order validator binary
 #   - release - builds release packages for the host platform
 #   - release-all - builds release packages for all target platforms
 #   - unit-test - runs the go-test based unit tests
@@ -105,6 +106,7 @@ pkgmap.idemixgen      := $(PKGNAME)/common/tools/idemixgen
 pkgmap.configtxgen    := $(PKGNAME)/common/tools/configtxgen
 pkgmap.configtxlator  := $(PKGNAME)/common/tools/configtxlator
 pkgmap.peer           := $(PKGNAME)/peer
+pkgmap.preorderval         := $(PKGNAME)/fastfabric/preorderval/
 pkgmap.orderer        := $(PKGNAME)/orderer
 pkgmap.block-listener := $(PKGNAME)/examples/events/block-listener
 pkgmap.discover       := $(PKGNAME)/cmd/discover
@@ -152,6 +154,9 @@ gotools: gotools-install
 .PHONY: peer
 peer: $(BUILD_DIR)/bin/peer
 peer-docker: $(BUILD_DIR)/image/peer/$(DUMMY)
+
+.PHONY: preorderval
+preorderval: $(BUILD_DIR)/bin/preorderval
 
 .PHONY: orderer
 orderer: $(BUILD_DIR)/bin/orderer

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-
 export PEER_DOMAIN=""           # can be anything if running on localhost
 export ORDERER_DOMAIN=""        # can be anything if running on localhost
 
