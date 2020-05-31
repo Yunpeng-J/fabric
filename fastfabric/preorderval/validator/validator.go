@@ -2,7 +2,6 @@ package validator
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	commonerrors "github.com/hyperledger/fabric/common/errors"
@@ -59,13 +58,12 @@ func (s server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 	return &Result{}, nil
 }
 
-func StartServer(address string) {
+func StartServer(address string, isMock bool) {
 	newServer := &server{
 		ccDefs:          make(map[string]*ccprovider.ChaincodeData),
 		policyEvaluator: txvalidator.PolicyEvaluator{},
+		MockVal:         isMock,
 	}
-	flag.BoolVar(&(newServer.MockVal), "x", false, "accepts all txs if set")
-	flag.Parse()
 
 	lis, err := net.Listen("tcp", address+":11000")
 	if err != nil {

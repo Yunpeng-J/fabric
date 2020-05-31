@@ -1,12 +1,15 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
-	"os"
 )
 
 func main() {
 	fmt.Println("Starting validation server")
-	validator.StartServer(os.Args[1])
+	var address = flag.String("address", "localhost", "accepts all txs if set")
+	var mock = flag.Bool("x", false, "accepts all txs if set")
+	flag.Parse()
+	validator.StartServer(*address, *mock)
 }
