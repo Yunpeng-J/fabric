@@ -11,6 +11,7 @@ package multichannel
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/protos/msp"
 	"sync"
 
 	"github.com/hyperledger/fabric/common/channelconfig"
@@ -69,7 +70,9 @@ type configResources struct {
 }
 
 func (cr *configResources) CreateBundle(channelID string, config *cb.Config) (*channelconfig.Bundle, error) {
-	return channelconfig.NewBundle(channelID, config)
+	return channelconfig.NewBundle(channelID, config, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 }
 
 func (cr *configResources) Update(bndl *channelconfig.Bundle) {
@@ -273,7 +276,9 @@ func (r *Registrar) newLedgerResources(configTx *cb.Envelope) *ledgerResources {
 		logger.Panicf("Error umarshaling config envelope from payload data: %s", err)
 	}
 
-	bundle, err := channelconfig.NewBundle(chdr.ChannelId, configEnvelope.Config)
+	bundle, err := channelconfig.NewBundle(chdr.ChannelId, configEnvelope.Config, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		logger.Panicf("Error creating channelconfig bundle: %s", err)
 	}
@@ -350,5 +355,7 @@ func (r *Registrar) NewChannelConfig(envConfigUpdate *cb.Envelope) (channelconfi
 
 // CreateBundle calls channelconfig.NewBundle
 func (r *Registrar) CreateBundle(channelID string, config *cb.Config) (channelconfig.Resources, error) {
-	return channelconfig.NewBundle(channelID, config)
+	return channelconfig.NewBundle(channelID, config, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 }

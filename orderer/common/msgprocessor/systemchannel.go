@@ -8,6 +8,7 @@ package msgprocessor
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/protos/msp"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/channelconfig"
@@ -336,6 +337,8 @@ func (dt *DefaultTemplator) NewChannelConfig(envConfigUpdate *cb.Envelope) (chan
 
 	bundle, err := channelconfig.NewBundle(channelHeader.ChannelId, &cb.Config{
 		ChannelGroup: channelGroup,
+	}, func(_ *msp.MSPConfig) error {
+		return nil
 	})
 
 	if err != nil {

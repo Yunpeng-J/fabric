@@ -82,12 +82,11 @@ func (s *server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 }
 
 func StartServer(address string, isMock bool) {
-	config.ValidatorAddress = address
 	newServer := &server{
 		ccDefs:          make(map[string]*ccprovider.ChaincodeData),
 		policyEvaluator: txvalidator.PolicyEvaluator{},
 		MockVal:         isMock,
-		mspCfgHandler:   channelconfig.NewMSPConfigHandler(msp.MSPv1_4_3),
+		mspCfgHandler:   channelconfig.NewMSPConfigHandler(msp.MSPv1_4_3, func(_ *mspprotos.MSPConfig) error { return nil }),
 	}
 
 	lis, err := net.Listen("tcp", address+":11000")

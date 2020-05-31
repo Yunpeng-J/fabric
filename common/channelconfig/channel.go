@@ -8,6 +8,7 @@ package channelconfig
 
 import (
 	"fmt"
+	mspprotos "github.com/hyperledger/fabric/protos/msp"
 	"math"
 
 	"github.com/hyperledger/fabric/bccsp"
@@ -77,7 +78,7 @@ type ChannelConfig struct {
 }
 
 // NewChannelConfig creates a new ChannelConfig
-func NewChannelConfig(channelGroup *cb.ConfigGroup) (*ChannelConfig, error) {
+func NewChannelConfig(channelGroup *cb.ConfigGroup, callValidator func(*mspprotos.MSPConfig) error) (*ChannelConfig, error) {
 	cc := &ChannelConfig{
 		protos: &ChannelProtos{},
 	}
@@ -92,7 +93,7 @@ func NewChannelConfig(channelGroup *cb.ConfigGroup) (*ChannelConfig, error) {
 		return nil, err
 	}
 
-	mspConfigHandler := NewMSPConfigHandler(capabilities.MSPVersion())
+	mspConfigHandler := NewMSPConfigHandler(capabilities.MSPVersion(), callValidator)
 
 	var err error
 	for groupName, group := range channelGroup.Groups {

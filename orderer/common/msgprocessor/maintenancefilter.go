@@ -8,6 +8,7 @@ package msgprocessor
 
 import (
 	"bytes"
+	"github.com/hyperledger/fabric/protos/msp"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/channelconfig"
@@ -78,7 +79,9 @@ func (mf *MaintenanceFilter) inspect(configEnvelope *cb.ConfigEnvelope, ordererC
 		return errors.Errorf("updated config does not include a config update")
 	}
 
-	bundle, err := channelconfig.NewBundle(mf.support.ChainID(), configEnvelope.Config)
+	bundle, err := channelconfig.NewBundle(mf.support.ChainID(), configEnvelope.Config, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to parse config")
 	}

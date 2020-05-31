@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/msp"
 	cb "github.com/hyperledger/fabric/protos/common"
+	mspprotos "github.com/hyperledger/fabric/protos/msp"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
 )
@@ -154,7 +155,7 @@ func (b *Bundle) ValidateNew(nb Resources) error {
 
 // NewBundleFromEnvelope wraps the NewBundle function, extracting the needed
 // information from a full configtx
-func NewBundleFromEnvelope(env *cb.Envelope) (*Bundle, error) {
+func NewBundleFromEnvelope(env *cb.Envelope, callValidator func(*mspprotos.MSPConfig) error) (*Bundle, error) {
 	payload, err := utils.UnmarshalPayload(env.Payload)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal payload from envelope")
@@ -174,16 +175,16 @@ func NewBundleFromEnvelope(env *cb.Envelope) (*Bundle, error) {
 		return nil, errors.Wrap(err, "failed to unmarshal channel header")
 	}
 
-	return NewBundle(chdr.ChannelId, configEnvelope.Config)
+	return NewBundle(chdr.ChannelId, configEnvelope.Config, callValidator)
 }
 
 // NewBundle creates a new immutable bundle of configuration
-func NewBundle(channelID string, config *cb.Config) (*Bundle, error) {
+func NewBundle(channelID string, config *cb.Config, callValidator func(*mspprotos.MSPConfig) error) (*Bundle, error) {
 	if err := preValidate(config); err != nil {
 		return nil, err
 	}
 
-	channelConfig, err := NewChannelConfig(config.ChannelGroup)
+	channelConfig, err := NewChannelConfig(config.ChannelGroup, callValidator)
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing channelconfig failed")
 	}

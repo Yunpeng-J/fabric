@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/protos/msp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -458,7 +459,9 @@ func (conCert ConsenterCertificate) IsConsenterOfChannel(configBlock *common.Blo
 	if err != nil {
 		return err
 	}
-	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig)
+	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return err
 	}

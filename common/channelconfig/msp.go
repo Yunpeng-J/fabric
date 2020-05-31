@@ -7,11 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package channelconfig
 
 import (
-	"context"
 	"fmt"
-	"github.com/hyperledger/fabric/fastfabric/config"
-	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/msp/cache"
@@ -26,14 +22,16 @@ type pendingMSPConfig struct {
 
 // MSPConfigHandler
 type MSPConfigHandler struct {
-	version msp.MSPVersion
-	idMap   map[string]*pendingMSPConfig
+	version       msp.MSPVersion
+	idMap         map[string]*pendingMSPConfig
+	callValidator func(*mspprotos.MSPConfig) error
 }
 
-func NewMSPConfigHandler(mspVersion msp.MSPVersion) *MSPConfigHandler {
+func NewMSPConfigHandler(mspVersion msp.MSPVersion, callValidator func(*mspprotos.MSPConfig) error) *MSPConfigHandler {
 	return &MSPConfigHandler{
-		version: mspVersion,
-		idMap:   make(map[string]*pendingMSPConfig),
+		version:       mspVersion,
+		idMap:         make(map[string]*pendingMSPConfig),
+		callValidator: callValidator,
 	}
 }
 
@@ -41,8 +39,7 @@ func NewMSPConfigHandler(mspVersion msp.MSPVersion) *MSPConfigHandler {
 func (bh *MSPConfigHandler) ProposeMSP(mspConfig *mspprotos.MSPConfig) (msp.MSP, error) {
 	var theMsp msp.MSP
 	var err error
-	val, err := validator.StartValidatorClient(config.ValidatorAddress)
-	if _, err := val.ProposeMSP(context.Background(), mspConfig); err != nil {
+	if err := bh.callValidator(mspConfig); err != nil {
 		panic(err)
 	}
 	switch mspConfig.Type {

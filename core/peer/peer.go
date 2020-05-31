@@ -12,6 +12,7 @@ import (
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	ffconfig "github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
+	common1 "github.com/hyperledger/fabric/protos/msp"
 	"net"
 	"runtime"
 	"sync"
@@ -141,6 +142,19 @@ func (sp *storeProvider) OpenStore(ledgerID string) (transientstore.Store, error
 	return store, err
 }
 
+func callValidator(config *common1.MSPConfig) error {
+	if ffconfig.ValidatorAddress != "" {
+		val, err := validator.StartValidatorClient(ffconfig.ValidatorAddress)
+		if err != nil {
+			panic(err)
+		}
+		_, err = val.ProposeMSP(context.Background(), config)
+		return err
+	} else {
+		return nil
+	}
+}
+
 func (cs *chainSupport) Apply(configtx *common.ConfigEnvelope) error {
 	err := cs.ConfigtxValidator().Validate(configtx)
 	if err != nil {
@@ -149,7 +163,7 @@ func (cs *chainSupport) Apply(configtx *common.ConfigEnvelope) error {
 
 	// If the chainSupport is being mocked, this field will be nil
 	if cs.bundleSource != nil {
-		bundle, err := channelconfig.NewBundle(cs.ConfigtxValidator().ChainID(), configtx.Config)
+		bundle, err := channelconfig.NewBundle(cs.ConfigtxValidator().ChainID(), configtx.Config, callValidator)
 		if err != nil {
 			return err
 		}
@@ -346,7 +360,7 @@ func createChain(
 	var bundle *channelconfig.Bundle
 
 	if chanConf != nil {
-		bundle, err = channelconfig.NewBundle(cid, chanConf)
+		bundle, err = channelconfig.NewBundle(cid, chanConf, callValidator)
 		if err != nil {
 			return err
 		}
@@ -358,7 +372,7 @@ func createChain(
 			return err
 		}
 
-		bundle, err = channelconfig.NewBundleFromEnvelope(envelopeConfig)
+		bundle, err = channelconfig.NewBundleFromEnvelope(envelopeConfig, callValidator)
 		if err != nil {
 			return err
 		}

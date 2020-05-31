@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	common1 "github.com/hyperledger/fabric/protos/msp"
 	"io/ioutil"
 	"os"
 	"runtime"
@@ -214,7 +215,9 @@ func GetOrdererEndpointOfChain(chainID string, signer msp.SigningIdentity, endor
 	if err != nil {
 		return nil, errors.WithMessage(err, "error extracting config block envelope")
 	}
-	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig)
+	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig, func(_ *common1.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return nil, errors.WithMessage(err, "error loading config block")
 	}

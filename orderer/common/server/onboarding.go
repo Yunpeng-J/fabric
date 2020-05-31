@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package server
 
 import (
+	"github.com/hyperledger/fabric/protos/msp"
 	"sync"
 	"time"
 
@@ -344,7 +345,9 @@ func ValidateBootstrapBlock(block *common.Block) error {
 		return errors.Wrap(err, "failed extracting envelope from block")
 	}
 
-	bundle, err := channelconfig.NewBundleFromEnvelope(firstTransaction)
+	bundle, err := channelconfig.NewBundleFromEnvelope(firstTransaction, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return err
 	}

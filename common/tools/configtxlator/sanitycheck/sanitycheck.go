@@ -29,7 +29,7 @@ type ElementMessage struct {
 func Check(config *cb.Config) (*Messages, error) {
 	result := &Messages{}
 
-	bundle, err := newchannelconfig.NewBundle("sanitycheck", config)
+	bundle, err := newchannelconfig.NewBundle("sanitycheck", config, func(_ *mspprotos.MSPConfig) error { return nil })
 	if err != nil {
 		result.GeneralErrors = []string{err.Error()}
 		return result, nil

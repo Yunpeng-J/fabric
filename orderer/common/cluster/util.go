@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"github.com/hyperledger/fabric/protos/msp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -378,7 +379,9 @@ func EndpointconfigFromConfigBlock(block *common.Block) ([]EndpointCriteria, err
 		return nil, err
 	}
 
-	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig)
+	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed extracting bundle from envelope")
 	}
@@ -546,7 +549,9 @@ type BlockVerifierAssembler struct {
 
 // VerifierFromConfig creates a BlockVerifier from the given configuration.
 func (bva *BlockVerifierAssembler) VerifierFromConfig(configuration *common.ConfigEnvelope, channel string) (BlockVerifier, error) {
-	bundle, err := channelconfig.NewBundle(channel, configuration.Config)
+	bundle, err := channelconfig.NewBundle(channel, configuration.Config, func(_ *msp.MSPConfig) error {
+		return nil
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed extracting bundle from envelope")
 	}
@@ -571,7 +576,9 @@ func (bv *BlockValidationPolicyVerifier) VerifyBlockSignature(sd []*common.Signe
 	policyMgr := bv.PolicyMgr
 	// If the envelope passed isn't nil, we should use a different policy manager.
 	if envelope != nil {
-		bundle, err := channelconfig.NewBundle(bv.Channel, envelope.Config)
+		bundle, err := channelconfig.NewBundle(bv.Channel, envelope.Config, func(_ *msp.MSPConfig) error {
+			return nil
+		})
 		if err != nil {
 			buff := &bytes.Buffer{}
 			protolator.DeepMarshalJSON(buff, envelope.Config)

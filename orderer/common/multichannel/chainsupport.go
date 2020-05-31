@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	cb "github.com/hyperledger/fabric/protos/common"
+	"github.com/hyperledger/fabric/protos/msp"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
 )
@@ -161,7 +162,9 @@ func (cs *ChainSupport) VerifyBlockSignature(sd []*cb.SignedData, envelope *cb.C
 	policyMgr := cs.PolicyManager()
 	// If the envelope passed isn't nil, we should use a different policy manager.
 	if envelope != nil {
-		bundle, err := channelconfig.NewBundle(cs.ChainID(), envelope.Config)
+		bundle, err := channelconfig.NewBundle(cs.ChainID(), envelope.Config, func(_ *msp.MSPConfig) error {
+			return nil
+		})
 		if err != nil {
 			return err
 		}
