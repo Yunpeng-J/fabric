@@ -352,6 +352,20 @@ func createChain(
 	pm txvalidator.PluginMapper,
 ) error {
 
+	var err error
+	var val validator.PreordervalidatorClient
+	if ffconfig.ValidatorAddress != "" {
+		val, err = validator.StartValidatorClient(ffconfig.ValidatorAddress)
+		if err != nil {
+			panic(err)
+		}
+		logger.Info("calling SetChain")
+		_, err = val.SetChain(context.Background(), &validator.Chain{Name: cid})
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	chanConf, err := retrievePersistedChannelConfig(ledger)
 	if err != nil {
 		return err
@@ -531,19 +545,6 @@ func CreateChainFromBlock(cb *common.Block, ccp ccprovider.ChaincodeProvider, sc
 	cid, err := utils.GetChainIDFromBlock(cb)
 	if err != nil {
 		return err
-	}
-
-	var val validator.PreordervalidatorClient
-	if ffconfig.ValidatorAddress != "" {
-		val, err = validator.StartValidatorClient(ffconfig.ValidatorAddress)
-		if err != nil {
-			panic(err)
-		}
-		logger.Info("calling SetChain")
-		_, err = val.SetChain(context.Background(), &validator.Chain{Name: cid})
-		if err != nil {
-			panic(err)
-		}
 	}
 
 	var l ledger.PeerLedger
