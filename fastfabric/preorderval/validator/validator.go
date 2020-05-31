@@ -2,6 +2,7 @@ package validator
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	commonerrors "github.com/hyperledger/fabric/common/errors"
@@ -61,7 +62,12 @@ func (s server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 	return &Result{}, nil
 }
 
+var mockVal bool
+
 func StartServer(address string) {
+	flag.BoolVar(&mockVal, "x", false, "accepts all txs if set")
+	flag.Parse()
+
 	lis, err := net.Listen("tcp", address+":11000")
 	if err != nil {
 		panic(err)
@@ -83,6 +89,9 @@ func Validate(env *cached.Envelope) peer.TxValidationCode {
 	var err error
 	var txResult peer.TxValidationCode
 
+	if mockVal {
+		return peer.TxValidationCode_VALID
+	}
 	if env == nil {
 		return peer.TxValidationCode_NIL_ENVELOPE
 	}

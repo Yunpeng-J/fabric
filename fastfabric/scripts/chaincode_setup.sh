@@ -18,7 +18,7 @@ done
 CORE_PEER_ADDRESS=$(get_correct_peer_address "${endorsers[0]}"):7051
 export CORE_PEER_ADDRESS
 a="'{\"Args\":[\"init\",\"0\", \"1\", \"0\"]}'"
-peer chaincode instantiate -o "$(get_correct_orderer_address)":7050 -C "${CHANNEL}" -n "${CHAINCODE}" -v 1.0 -c "${a}"
+echo peer chaincode instantiate -o "$(get_correct_orderer_address)":7050 -C "${CHANNEL}" -n "${CHAINCODE}" -v 1.0 -c "${a}" | bash
 
 sleep 5
 
