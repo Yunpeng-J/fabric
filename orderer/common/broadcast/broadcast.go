@@ -188,6 +188,7 @@ func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.Broad
 		}
 		if cb.HeaderType(chdr.Type) == cb.HeaderType_ENDORSER_TRANSACTION {
 			if result, err := bh.Validator.Validate(context.Background(), msg); err != nil || result.Code != peer.TxValidationCode_VALID {
+				logger.Warnf("Tx validation failed: %v", err)
 				return &ab.BroadcastResponse{Status: cb.Status_BAD_REQUEST, Info: "Tx did not adhere to endorsement policy"}
 			}
 		}

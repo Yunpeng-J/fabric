@@ -40,22 +40,26 @@ type server struct {
 }
 
 func (s *server) Validate(_ context.Context, env *common.Envelope) (*ValidationResult, error) {
+	logger.Debug("Call to Validate")
 	return &ValidationResult{Code: s.DoValidate(&cached.Envelope{Envelope: env})}, nil
 }
 
 var chains = make(map[string]bool)
 
 func (s *server) SetSysCC(_ context.Context, sys *SysCC) (*Result, error) {
+	logger.Debugf("Call to SetSysCC with cc %s", sys.Name)
 	s.sysCCs = append(s.sysCCs, sys)
 	return &Result{}, nil
 }
 
 func (s *server) ProposeMSP(_ context.Context, mspConfig *mspprotos.MSPConfig) (*Result, error) {
+	logger.Debug("Call to ProposeMSP")
 	_, err := s.mspCfgHandler.ProposeMSP(mspConfig)
 	return &Result{}, err
 }
 
 func (s *server) SetChain(_ context.Context, chain *Chain) (*Result, error) {
+	logger.Debugf("Call to SetChain for chain %s", chain.Name)
 	chains[chain.Name] = true
 	manager, err := s.mspCfgHandler.CreateMSPManager()
 	if err != nil {
@@ -66,12 +70,14 @@ func (s *server) SetChain(_ context.Context, chain *Chain) (*Result, error) {
 }
 
 func (s *server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
+
 	var def = &ccprovider.ChaincodeData{}
 	if err := proto.Unmarshal(data.Data, def); err != nil {
 		return nil, err
 	}
 
 	s.ccDefs[def.Name] = def
+	logger.Debug("Call to SetCCDefs with def %s", def.Name)
 	return &Result{}, nil
 }
 
