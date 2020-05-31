@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "common/common.proto";
+import "msp/msp_config.proto";
 import "peer/transaction.proto";
 
 package preorderval;
@@ -19,6 +20,7 @@ service preordervalidator {
     rpc SetSysCC(SysCC) returns (Result) {};
     rpc SetChain(Chain) returns (Result) {};
     rpc SetCCDefs(CCDef) returns (Result) {};
+    rpc ProposeMSP(msp.MSPConfig) returns (Result) {};
     rpc Validate(common.Envelope) returns (ValidationResult){};
 }
 

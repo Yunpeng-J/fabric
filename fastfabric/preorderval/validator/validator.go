@@ -14,15 +14,21 @@ import (
 	"github.com/hyperledger/fabric/core/common/sysccprovider"
 	"github.com/hyperledger/fabric/core/common/validation"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/msp"
+	"github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protos/common"
-	"github.com/hyperledger/fabric/protos/msp"
+	msp2 "github.com/hyperledger/fabric/protos/msp"
+	mspprotos "github.com/hyperledger/fabric/protos/msp"
 	"github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+
+	"github.com/hyperledger/fabric/common/channelconfig"
 	"net"
 )
 
+var ValidatorAddress string
 var logger = flogging.MustGetLogger("preorder.validator")
 
 type server struct {
@@ -30,25 +36,36 @@ type server struct {
 	sysCCs          []*SysCC
 	ccDefs          map[string]*ccprovider.ChaincodeData
 	policyEvaluator txvalidator.PolicyEvaluator
+	mspCfgHandler   *channelconfig.MSPConfigHandler
 }
 
-func (s server) Validate(_ context.Context, env *common.Envelope) (*ValidationResult, error) {
+func (s *server) Validate(_ context.Context, env *common.Envelope) (*ValidationResult, error) {
 	return &ValidationResult{Code: s.DoValidate(&cached.Envelope{Envelope: env})}, nil
 }
 
 var chains = make(map[string]bool)
 
-func (s server) SetSysCC(_ context.Context, sys *SysCC) (*Result, error) {
+func (s *server) SetSysCC(_ context.Context, sys *SysCC) (*Result, error) {
 	s.sysCCs = append(s.sysCCs, sys)
 	return &Result{}, nil
 }
 
-func (s server) SetChain(_ context.Context, chain *Chain) (*Result, error) {
+func (s *server) ProposeMSP(_ context.Context, mspConfig *mspprotos.MSPConfig) (*Result, error) {
+	_, err := s.mspCfgHandler.ProposeMSP(mspConfig)
+	return &Result{}, err
+}
+
+func (s *server) SetChain(_ context.Context, chain *Chain) (*Result, error) {
 	chains[chain.Name] = true
+	manager, err := s.mspCfgHandler.CreateMSPManager()
+	if err != nil {
+		return nil, err
+	}
+	mgmt.XXXSetMSPManager(chain.Name, manager)
 	return &Result{}, nil
 }
 
-func (s server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
+func (s *server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 	var def = &ccprovider.ChaincodeData{}
 	if err := proto.Unmarshal(data.Data, def); err != nil {
 		return nil, err
@@ -59,10 +76,12 @@ func (s server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 }
 
 func StartServer(address string, isMock bool) {
+	ValidatorAddress = address
 	newServer := &server{
 		ccDefs:          make(map[string]*ccprovider.ChaincodeData),
 		policyEvaluator: txvalidator.PolicyEvaluator{},
 		MockVal:         isMock,
+		mspCfgHandler:   channelconfig.NewMSPConfigHandler(msp.MSPv1_4_3),
 	}
 
 	lis, err := net.Listen("tcp", address+":11000")
@@ -591,7 +610,7 @@ func deduplicateIdentity(cap *cached.ChaincodeActionPayload) ([]*common.SignedDa
 	// loop through each of the endorsements and build the signature set
 	for _, endorsement := range cap.Action.Endorsements {
 		//unmarshal endorser bytes
-		serializedIdentity := &msp.SerializedIdentity{}
+		serializedIdentity := &msp2.SerializedIdentity{}
 		if err := proto.Unmarshal(endorsement.Endorser, serializedIdentity); err != nil {
 			logger.Errorf("Unmarshal endorser error: %s", err)
 			return nil, policyErr(fmt.Errorf("Unmarshal endorser error: %s", err))
