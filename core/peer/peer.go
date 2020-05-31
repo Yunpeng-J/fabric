@@ -524,6 +524,7 @@ func CreateChainFromBlock(cb *common.Block, ccp ccprovider.ChaincodeProvider, sc
 		if err != nil {
 			panic(err)
 		}
+		logger.Info("calling SetChain")
 		_, err = val.SetChain(context.Background(), &validator.Chain{Name: cid})
 		if err != nil {
 			panic(err)

@@ -77,7 +77,7 @@ func (s *server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 	}
 
 	s.ccDefs[def.Name] = def
-	logger.Debug("Call to SetCCDefs with def %s", def.Name)
+	logger.Debugf("Call to SetCCDefs with def %s", def.Name)
 	return &Result{}, nil
 }
 

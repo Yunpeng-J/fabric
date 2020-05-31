@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package channelconfig
 
 import (
+	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/msp"
@@ -38,7 +40,10 @@ func NewMSPConfigHandler(mspVersion msp.MSPVersion) *MSPConfigHandler {
 func (bh *MSPConfigHandler) ProposeMSP(mspConfig *mspprotos.MSPConfig) (msp.MSP, error) {
 	var theMsp msp.MSP
 	var err error
-
+	val, err := validator.StartValidatorClient(validator.ValidatorAddress)
+	if _, err := val.ProposeMSP(context.Background(), mspConfig); err != nil {
+		panic(err)
+	}
 	switch mspConfig.Type {
 	case int32(msp.FABRIC):
 		// create the bccsp msp instance
