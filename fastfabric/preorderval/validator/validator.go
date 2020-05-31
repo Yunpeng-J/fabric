@@ -25,25 +25,22 @@ import (
 )
 
 var logger = flogging.MustGetLogger("preorder.validator")
-var ValidatorAddress string
-
-var policyEvaluator = txvalidator.PolicyEvaluator{}
-
-var ccDefs = make(map[string]*ccprovider.ChaincodeData)
-
-var sysCCs []*SysCC
 
 type server struct {
+	MockVal         bool
+	sysCCs          []*SysCC
+	ccDefs          map[string]*ccprovider.ChaincodeData
+	policyEvaluator txvalidator.PolicyEvaluator
 }
 
 func (s server) Validate(_ context.Context, env *common.Envelope) (*ValidationResult, error) {
-	return &ValidationResult{Code: Validate(&cached.Envelope{Envelope: env})}, nil
+	return &ValidationResult{Code: s.DoValidate(&cached.Envelope{Envelope: env})}, nil
 }
 
 var chains = make(map[string]bool)
 
 func (s server) SetSysCC(_ context.Context, sys *SysCC) (*Result, error) {
-	sysCCs = append(sysCCs, sys)
+	s.sysCCs = append(s.sysCCs, sys)
 	return &Result{}, nil
 }
 
@@ -58,14 +55,16 @@ func (s server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 		return nil, err
 	}
 
-	ccDefs[def.Name] = def
+	s.ccDefs[def.Name] = def
 	return &Result{}, nil
 }
 
-var mockVal bool
-
 func StartServer(address string) {
-	flag.BoolVar(&mockVal, "x", false, "accepts all txs if set")
+	newServer := &server{
+		ccDefs:          make(map[string]*ccprovider.ChaincodeData),
+		policyEvaluator: txvalidator.PolicyEvaluator{},
+	}
+	flag.BoolVar(&(newServer.MockVal), "x", false, "accepts all txs if set")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", address+":11000")
@@ -73,13 +72,13 @@ func StartServer(address string) {
 		panic(err)
 	}
 	s := grpc.NewServer()
-	RegisterPreordervalidatorServer(s, &server{})
+	RegisterPreordervalidatorServer(s, newServer)
 	if err := s.Serve(lis); err != nil {
 		panic(err)
 	}
 }
 
-func Validate(env *cached.Envelope) peer.TxValidationCode {
+func (s *server) DoValidate(env *cached.Envelope) peer.TxValidationCode {
 	// validate the transaction: here we check that the transaction
 	// is properly formed, properly signed and that the security
 	// chain binding proposal to endorsements to tx holds. We do
@@ -89,9 +88,10 @@ func Validate(env *cached.Envelope) peer.TxValidationCode {
 	var err error
 	var txResult peer.TxValidationCode
 
-	if mockVal {
+	if s.MockVal {
 		return peer.TxValidationCode_VALID
 	}
+
 	if env == nil {
 		return peer.TxValidationCode_NIL_ENVELOPE
 	}
@@ -120,7 +120,7 @@ func Validate(env *cached.Envelope) peer.TxValidationCode {
 
 		// Validate tx with vscc and policy
 		logger.Debug("Validating transaction vscc tx validate")
-		err, cde := VSCCValidateTx(payload)
+		err, cde := s.VSCCValidateTx(payload)
 		if err != nil {
 			logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
 			switch err.(type) {
@@ -219,7 +219,7 @@ func chainExists(channel string) bool {
 	return ok
 }
 
-func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
+func (s *server) VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 
 	// get header extensions so we have the chaincode ID
 	hdrExt, err := payload.Header.UnmarshalChaincodeHeaderExtension()
@@ -310,11 +310,11 @@ func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 			writesToLSCC = true
 		}
 
-		if !writesToNonInvokableSCC && IsSysCCAndNotInvokableCC2CC(ns.NameSpace) {
+		if !writesToNonInvokableSCC && s.IsSysCCAndNotInvokableCC2CC(ns.NameSpace) {
 			writesToNonInvokableSCC = true
 		}
 
-		if !writesToNonInvokableSCC && IsSysCCAndNotInvokableExternal(ns.NameSpace) {
+		if !writesToNonInvokableSCC && s.IsSysCCAndNotInvokableExternal(ns.NameSpace) {
 			writesToNonInvokableSCC = true
 		}
 	}
@@ -323,7 +323,7 @@ func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 	// validation will behave differently depending on the type of
 	// chaincode (system vs. application)
 
-	if !IsSysCC(ccID) {
+	if !s.IsSysCC(ccID) {
 		// if we're here, we know this is an invocation of an application chaincode;
 		// first of all, we make sure that:
 		// 1) we don't write to LSCC - an application chaincode is free to invoke LSCC
@@ -350,7 +350,7 @@ func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 		// validate *EACH* read write set according to its chaincode's endorsement policy
 		for _, ns := range wrNamespace {
 			// Get latest chaincode version, vscc and validate policy
-			txcc, _, policy, err := GetInfoForValidate(chdr, ns)
+			txcc, _, policy, err := s.GetInfoForValidate(chdr, ns)
 			if err != nil {
 				logger.Errorf("GetInfoForValidate for txId = %s returned error: %+v", chdr.TxId, err)
 				return err, peer.TxValidationCode_INVALID_OTHER_REASON
@@ -365,7 +365,7 @@ func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 				return err, peer.TxValidationCode_EXPIRED_CHAINCODE
 			}
 
-			if err = VSCCValidateTxForCC(payload, policy); err != nil {
+			if err = s.VSCCValidateTxForCC(payload, policy); err != nil {
 				switch err.(type) {
 				case *commonerrors.VSCCEndorsementPolicyError:
 					return err, peer.TxValidationCode_ENDORSEMENT_POLICY_FAILURE
@@ -378,8 +378,8 @@ func VSCCValidateTx(payload *cached.Payload) (error, peer.TxValidationCode) {
 	return nil, peer.TxValidationCode_VALID
 }
 
-func VSCCValidateTxForCC(pl *cached.Payload, policy []byte) error {
-	err := ValidateVSCC(pl, policy)
+func (s *server) VSCCValidateTxForCC(pl *cached.Payload, policy []byte) error {
+	err := s.ValidateVSCC(pl, policy)
 	if err == nil {
 		return nil
 	}
@@ -423,7 +423,7 @@ func txWritesToNamespace(ns *cached.NsRwSet) bool {
 	return false
 }
 
-func GetInfoForValidate(chdr *cached.ChannelHeader, ccID string) (*sysccprovider.ChaincodeInstance, *sysccprovider.ChaincodeInstance, []byte, error) {
+func (s *server) GetInfoForValidate(chdr *cached.ChannelHeader, ccID string) (*sysccprovider.ChaincodeInstance, *sysccprovider.ChaincodeInstance, []byte, error) {
 	cc := &sysccprovider.ChaincodeInstance{
 		ChainID:          chdr.ChannelId,
 		ChaincodeName:    ccID,
@@ -435,13 +435,13 @@ func GetInfoForValidate(chdr *cached.ChannelHeader, ccID string) (*sysccprovider
 		ChaincodeVersion: coreUtil.GetSysCCVersion(), // Get vscc version
 	}
 	var policy []byte
-	if !IsSysCC(ccID) {
+	if !s.IsSysCC(ccID) {
 		// when we are validating a chaincode that is not a
 		// system CC, we need to ask the CC to give us the name
 		// of VSCC and of the policy that should be used
 
 		// obtain name of the VSCC and the policy
-		cd, err := getCDataForCC(ccID)
+		cd, err := s.getCDataForCC(ccID)
 		if err != nil {
 			msg := fmt.Sprintf("Unable to get chaincode data from ledger for txid %s, due to %s", chdr.TxId, err)
 			logger.Errorf(msg)
@@ -456,8 +456,8 @@ func GetInfoForValidate(chdr *cached.ChannelHeader, ccID string) (*sysccprovider
 }
 
 // IsSysCC returns true if the supplied chaincode is a system chaincode
-func IsSysCC(name string) bool {
-	for _, sysCC := range sysCCs {
+func (s *server) IsSysCC(name string) bool {
+	for _, sysCC := range s.sysCCs {
 		if sysCC.Name == name {
 			return true
 		}
@@ -471,8 +471,8 @@ func IsSysCC(name string) bool {
 // IsSysCCAndNotInvokableCC2CC returns true if the chaincode
 // is a system chaincode and *CANNOT* be invoked through
 // a cc2cc invocation
-func IsSysCCAndNotInvokableCC2CC(name string) bool {
-	for _, sysCC := range sysCCs {
+func (s *server) IsSysCCAndNotInvokableCC2CC(name string) bool {
+	for _, sysCC := range s.sysCCs {
 		if sysCC.Name == name {
 			return !sysCC.InvokableCC2CC
 		}
@@ -488,8 +488,8 @@ func IsSysCCAndNotInvokableCC2CC(name string) bool {
 // IsSysCCAndNotInvokableExternal returns true if the chaincode
 // is a system chaincode and *CANNOT* be invoked through
 // a proposal to this peer
-func IsSysCCAndNotInvokableExternal(name string) bool {
-	for _, sysCC := range sysCCs {
+func (s *server) IsSysCCAndNotInvokableExternal(name string) bool {
+	for _, sysCC := range s.sysCCs {
 		if sysCC.Name == name {
 			return !sysCC.InvokableExternal
 		}
@@ -506,8 +506,8 @@ func isDeprecatedSysCC(name string) bool {
 	return name == "vscc" || name == "escc"
 }
 
-func getCDataForCC(ccid string) (ccprovider.ChaincodeDefinition, error) {
-	cd, ok := ccDefs[ccid]
+func (s *server) getCDataForCC(ccid string) (ccprovider.ChaincodeDefinition, error) {
+	cd, ok := s.ccDefs[ccid]
 	if !ok {
 		return nil, errors.New("chaincode not found")
 	}
@@ -525,7 +525,7 @@ func getCDataForCC(ccid string) (ccprovider.ChaincodeDefinition, error) {
 
 // Validate validates the given envelope corresponding to a transaction with an endorsement
 // policy as given in its serialized form
-func ValidateVSCC(
+func (s *server) ValidateVSCC(
 	payl *cached.Payload,
 	policyBytes []byte,
 ) commonerrors.TxValidationError {
@@ -560,7 +560,7 @@ func ValidateVSCC(
 	}
 
 	// evaluate the signature set against the policy
-	err = policyEvaluator.Evaluate(policyBytes, signatureSet)
+	err = s.policyEvaluator.Evaluate(policyBytes, signatureSet)
 	if err != nil {
 		logger.Warningf("Endorsement policy failure for transaction txid=%s, err: %s", chdr.GetTxId(), err.Error())
 		if len(signatureSet) < len(cap.Action.Endorsements) {
