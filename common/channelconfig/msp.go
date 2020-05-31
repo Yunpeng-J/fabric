@@ -9,6 +9,7 @@ package channelconfig
 import (
 	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 
 	"github.com/golang/protobuf/proto"
@@ -40,7 +41,7 @@ func NewMSPConfigHandler(mspVersion msp.MSPVersion) *MSPConfigHandler {
 func (bh *MSPConfigHandler) ProposeMSP(mspConfig *mspprotos.MSPConfig) (msp.MSP, error) {
 	var theMsp msp.MSP
 	var err error
-	val, err := validator.StartValidatorClient(validator.ValidatorAddress)
+	val, err := validator.StartValidatorClient(config.ValidatorAddress)
 	if _, err := val.ProposeMSP(context.Background(), mspConfig); err != nil {
 		panic(err)
 	}

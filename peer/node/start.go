@@ -124,7 +124,7 @@ func startCmd() *cobra.Command {
 	flags.BoolVarP(&ffconfig.IsBenchmark, "isBenchmark", "b", false, "Runs the peer in benchmarking mode. Times between block commits are logged to the file specified with the --output (-o) flag.")
 	flags.StringVarP(&benchmarkOutput, "output", "o", "benchmark.log", "Specifies the benchmark out put location.")
 	flags.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
-	flags.StringVar(&validator.ValidatorAddress, "validatorAddr", "", "The address of the decoupled endorsement policy validator")
+	flags.StringVar(&ffconfig.ValidatorAddress, "validatorAddr", "", "The address of the decoupled endorsement policy validator")
 
 	return nodeStartCmd
 }
@@ -193,8 +193,8 @@ func serve(args []string) error {
 
 	var val validator.PreordervalidatorClient
 	var err error
-	if validator.ValidatorAddress != "" {
-		val, err = validator.StartValidatorClient(validator.ValidatorAddress)
+	if ffconfig.ValidatorAddress != "" {
+		val, err = validator.StartValidatorClient(ffconfig.ValidatorAddress)
 		if err != nil {
 			panic(err)
 		}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	ffconfig "github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"net"
 	"runtime"
@@ -519,8 +520,8 @@ func CreateChainFromBlock(cb *common.Block, ccp ccprovider.ChaincodeProvider, sc
 	}
 
 	var val validator.PreordervalidatorClient
-	if validator.ValidatorAddress != "" {
-		val, err = validator.StartValidatorClient(validator.ValidatorAddress)
+	if ffconfig.ValidatorAddress != "" {
+		val, err = validator.StartValidatorClient(ffconfig.ValidatorAddress)
 		if err != nil {
 			panic(err)
 		}

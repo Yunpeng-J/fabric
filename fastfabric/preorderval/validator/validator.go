@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger/fabric/core/common/sysccprovider"
 	"github.com/hyperledger/fabric/core/common/validation"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protos/common"
@@ -28,7 +29,6 @@ import (
 	"net"
 )
 
-var ValidatorAddress string
 var logger = flogging.MustGetLogger("preorder.validator")
 
 type server struct {
@@ -82,7 +82,7 @@ func (s *server) SetCCDefs(_ context.Context, data *CCDef) (*Result, error) {
 }
 
 func StartServer(address string, isMock bool) {
-	ValidatorAddress = address
+	config.ValidatorAddress = address
 	newServer := &server{
 		ccDefs:          make(map[string]*ccprovider.ChaincodeData),
 		policyEvaluator: txvalidator.PolicyEvaluator{},
