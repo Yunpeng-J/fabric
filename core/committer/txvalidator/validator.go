@@ -9,7 +9,9 @@ package txvalidator
 import (
 	"context"
 	"fmt"
+	commonerrors "github.com/hyperledger/fabric/common/errors"
 	"github.com/hyperledger/fabric/fastfabric/cached"
+	"github.com/hyperledger/fabric/fastfabric/config"
 	"time"
 
 	"github.com/hyperledger/fabric/common/channelconfig"
@@ -266,6 +268,14 @@ func (v *TxValidator) validateTx(req *blockValidationRequest, results chan<- *bl
 	tIdx := req.tIdx
 	txID := ""
 
+	if config.ValidatorAddress != "" {
+		results <- &blockValidationResult{
+			tIdx:           tIdx,
+			validationCode: peer.TxValidationCode_VALID,
+		}
+		return
+	}
+
 	if block.Data.Data[tIdx] == nil {
 		results <- &blockValidationResult{
 			tIdx: tIdx,
@@ -334,6 +344,33 @@ func (v *TxValidator) validateTx(req *blockValidationRequest, results chan<- *bl
 			if erroneousResultEntry != nil {
 				results <- erroneousResultEntry
 				return
+			}
+
+			// Validate tx with vscc and policy
+			logger.Debug("Validating transaction vscc tx validate")
+			err, cde := v.Vscc.VSCCValidateTx(tIdx, payload, block.Data.Data[tIdx], block)
+			if err != nil {
+				logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
+				switch err.(type) {
+				case *commonerrors.VSCCExecutionFailureError:
+					results <- &blockValidationResult{
+						tIdx: tIdx,
+						err:  err,
+					}
+					return
+				case *commonerrors.VSCCInfoLookupFailureError:
+					results <- &blockValidationResult{
+						tIdx: tIdx,
+						err:  err,
+					}
+					return
+				default:
+					results <- &blockValidationResult{
+						tIdx:           tIdx,
+						validationCode: cde,
+					}
+					return
+				}
 			}
 
 			invokeCC, upgradeCC, err := v.getTxCCInstance(payload)

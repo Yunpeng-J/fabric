@@ -8,6 +8,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"io/ioutil"
 	"os"
@@ -82,9 +83,13 @@ func NewServer(
 	expirationCheckDisabled bool,
 	validatorAddress string,
 ) ab.AtomicBroadcastServer {
-	client, err := validator.StartValidatorClient(validatorAddress)
-	if err != nil {
-		panic(err)
+	var client validator.PreordervalidatorClient
+	var err error
+	if config.ValidatorAddress != "" {
+		client, err = validator.StartValidatorClient(validatorAddress)
+		if err != nil {
+			panic(err)
+		}
 	}
 	s := &server{
 		dh: deliver.NewHandler(
