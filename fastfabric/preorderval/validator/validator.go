@@ -65,6 +65,7 @@ func (s *server) SetChain(_ context.Context, chain *Chain) (*Result, error) {
 		return nil, err
 	}
 	mgmt.XXXSetMSPManager(chain.Name, manager)
+	s.policyEvaluator.IdentityDeserializer = manager
 	return &Result{}, nil
 }
 
