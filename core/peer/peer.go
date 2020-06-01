@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/cached"
 	ffconfig "github.com/hyperledger/fabric/fastfabric/config"
-	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
+	preval "github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	common1 "github.com/hyperledger/fabric/protos/msp"
 	"net"
 	"runtime"
@@ -144,11 +144,14 @@ func (sp *storeProvider) OpenStore(ledgerID string) (transientstore.Store, error
 
 func callValidator(config *common1.MSPConfig) error {
 	if ffconfig.ValidatorAddress != "" {
-		val, err := validator.StartValidatorClient(ffconfig.ValidatorAddress)
+		val, err := preval.StartValidatorClient(ffconfig.ValidatorAddress)
 		if err != nil {
 			panic(err)
 		}
 		_, err = val.ProposeMSP(context.Background(), config)
+		val.SetCCDefs(context.Background(), &preval.CCDef{})
+		val.SetChain(context.Background(), &preval.Chain{})
+		val.SetSysCC(context.Background(), &preval.SysCC{})
 		return err
 	} else {
 		return nil
@@ -352,20 +355,6 @@ func createChain(
 	pm txvalidator.PluginMapper,
 ) error {
 
-	var err error
-	var val validator.PreordervalidatorClient
-	if ffconfig.ValidatorAddress != "" {
-		val, err = validator.StartValidatorClient(ffconfig.ValidatorAddress)
-		if err != nil {
-			panic(err)
-		}
-		logger.Info("calling SetChain")
-		_, err = val.SetChain(context.Background(), &validator.Chain{Name: cid})
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	chanConf, err := retrievePersistedChannelConfig(ledger)
 	if err != nil {
 		return err
@@ -535,6 +524,19 @@ func createChain(
 		cs:        cs,
 		cb:        cb,
 		committer: c,
+	}
+
+	var val preval.PreordervalidatorClient
+	if ffconfig.ValidatorAddress != "" {
+		val, err = preval.StartValidatorClient(ffconfig.ValidatorAddress)
+		if err != nil {
+			panic(err)
+		}
+		logger.Info("calling SetChain")
+		_, err = val.SetChain(context.Background(), &preval.Chain{Name: cid})
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	return nil
