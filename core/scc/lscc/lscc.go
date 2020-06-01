@@ -554,18 +554,6 @@ func (lscc *LifeCycleSysCC) executeInstall(stub shim.ChaincodeStubInterface, ccb
 		return err
 	}
 
-	if lscc.validatorClient != nil {
-		ccData := ccpack.GetChaincodeData()
-		raw, err := proto.Marshal(ccData)
-		if err != nil {
-			panic(err)
-		}
-		_, err = lscc.validatorClient.SetCCDefs(context.Background(), &validator.CCDef{Data: raw})
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	cds := ccpack.GetDepSpec()
 
 	if cds == nil {
@@ -918,6 +906,14 @@ func (lscc *LifeCycleSysCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response
 		if err != nil {
 			return shim.Error(err.Error())
 		}
+
+		if lscc.validatorClient != nil {
+			_, err = lscc.validatorClient.SetCCDefs(context.Background(), &validator.CCDef{Data: cdbytes})
+			if err != nil {
+				panic(err)
+			}
+		}
+
 		return shim.Success(cdbytes)
 	case CCEXISTS, CHAINCODEEXISTS, GETDEPSPEC, GETDEPLOYMENTSPEC, GETCCDATA, GETCHAINCODEDATA:
 		if len(args) != 3 {

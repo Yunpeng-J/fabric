@@ -149,9 +149,6 @@ func callValidator(config *common1.MSPConfig) error {
 			panic(err)
 		}
 		_, err = val.ProposeMSP(context.Background(), config)
-		val.SetCCDefs(context.Background(), &preval.CCDef{})
-		val.SetChain(context.Background(), &preval.Chain{})
-		val.SetSysCC(context.Background(), &preval.SysCC{})
 		return err
 	} else {
 		return nil
