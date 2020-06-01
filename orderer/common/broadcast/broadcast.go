@@ -186,7 +186,7 @@ func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.Broad
 			logger.Warningf("[channel: %s] Rejecting broadcast of normal message from %s because of error: %s", chdr.ChannelId, addr, err)
 			return &ab.BroadcastResponse{Status: ClassifyError(err), Info: err.Error()}
 		}
-		if cb.HeaderType(chdr.Type) == cb.HeaderType_ENDORSER_TRANSACTION {
+		if cb.HeaderType(chdr.Type) == cb.HeaderType_ENDORSER_TRANSACTION && bh.Validator != nil {
 			if result, err := bh.Validator.Validate(context.Background(), msg); err != nil || result.Code != peer.TxValidationCode_VALID {
 				logger.Warnf("Tx validation failed: %v", err)
 				return &ab.BroadcastResponse{Status: cb.Status_BAD_REQUEST, Info: "Tx did not adhere to endorsement policy"}
