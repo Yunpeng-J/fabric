@@ -2,9 +2,9 @@
 source base_parameters.sh
 
 export FABRIC_LOGGING_SPEC=INFO
+p_addr="$(get_correct_peer_address "$(hostname)")"
 export CORE_PEER_MSPCONFIGPATH=${FABRIC_CFG_PATH}/crypto-config/peerOrganizations/${PEER_DOMAIN}/peers/$p_addr/msp
 
-p_addr="$(get_correct_peer_address "$(hostname)")"
 export CORE_PEER_ID=${p_addr}
 export CORE_PEER_ADDRESS=${p_addr}:7051
 export CORE_PEER_GOSSIP_EXTERNALENDPOINT=${p_addr}:7051
