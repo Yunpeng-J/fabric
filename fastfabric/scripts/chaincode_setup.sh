@@ -1,6 +1,9 @@
 #!/bin/bash
 source base_parameters.sh
 
+export CORE_PEER_MSPCONFIGPATH="${FABRIC_CFG_PATH}"/crypto-config/peerOrganizations/"${PEER_DOMAIN}"/users/Admin@"${PEER_DOMAIN}"/msp
+export CORE_PEER_LOCALMSPID=Org1MSP
+
 endorsers=("${FAST_PEER_ADDRESS}")
 
 if [[ ! ${#ENDORSER_ADDRESS[@]} -eq 0 ]]

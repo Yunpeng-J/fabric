@@ -2,6 +2,7 @@
 source base_parameters.sh
 
 export CORE_PEER_MSPCONFIGPATH="${FABRIC_CFG_PATH}"/crypto-config/peerOrganizations/"${PEER_DOMAIN}"/users/Admin@"${PEER_DOMAIN}"/msp
+export CORE_PEER_LOCALMSPID=Org1MSP
 
 index=$1
 remainder=$2
