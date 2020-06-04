@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source base_parameters.sh
 
+(cd "${FABRIC_ROOT}" && make cryptogen)
+(cd "${FABRIC_ROOT}" && make configtxgen)
+
 if [[ ! -f core.yaml.bak ]]; then
   cp core.yaml core.yaml.bak
 fi

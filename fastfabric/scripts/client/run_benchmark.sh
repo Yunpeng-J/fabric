@@ -5,6 +5,9 @@ target=$4
 conflictPercentage=$5
 accountCount=$6
 totalThreads=$3
+
+source ../custom_parameters.sh
+
 for i in $(seq $offset $(($threadCount-1)))
 do
     node ./invoke2.js $i $(($accountCount/$totalThreads)) 1 $target $conflictPercentage&

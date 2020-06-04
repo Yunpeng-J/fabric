@@ -65,7 +65,9 @@ func (v *DefaultValidation) Validate(block *cached.Block, namespace string, txPo
 	var err error
 	switch {
 	case v.Capabilities.V1_3Validation():
-		err = v.TxValidatorV1_3.Validate(block, namespace, txPosition, actionPosition, serializedPolicy.Bytes())
+		//FastFabric is incompatible with key level based endorsement validation
+		fallthrough
+		//err = v.TxValidatorV1_3.Validate(block, namespace, txPosition, actionPosition, serializedPolicy.Bytes())
 
 	case v.Capabilities.V1_2Validation():
 		fallthrough

@@ -2,6 +2,7 @@
 source base_parameters.sh
 
 export CORE_PEER_MSPCONFIGPATH=./crypto-config/peerOrganizations/${PEER_DOMAIN}/users/Admin@${PEER_DOMAIN}/msp
+export CORE_PEER_LOCALMSPID=Org1MSP
 
 peer=$1
 
