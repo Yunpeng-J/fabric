@@ -10,10 +10,11 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	"github.com/pkg/errors"
 	"sync"
+	"sync/atomic"
 )
 
 func newFsBlockStore(ledgerId string) *BlockStoreImpl {
-	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}}
+	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}, blockCache: make([]*common.Block, 1024), blockIdx: -1}
 }
 
 type BlockStoreImpl struct {
@@ -24,6 +25,8 @@ type BlockStoreImpl struct {
 	currentHash   []byte
 	previousHash  []byte
 	initialBlocks []*common.Block
+	blockCache    []*common.Block
+	blockIdx      uint64
 }
 
 func (b *BlockStoreImpl) AddBlock(block *common.Block) error {
@@ -47,6 +50,8 @@ func (b *BlockStoreImpl) AddBlock(block *common.Block) error {
 	b.previousHash = b.currentHash
 	b.currentHash = block.Header.Hash()
 	b.blockHeight = block.Header.Number + 1
+	atomic.AddUint64(&b.blockIdx, 1)
+	b.blockCache[b.blockIdx%1024] = block
 	return nil
 }
 
@@ -86,6 +91,9 @@ func (b *BlockStoreImpl) RetrieveBlockByHash(blockHash []byte) (*common.Block, e
 }
 
 func (b *BlockStoreImpl) RetrieveBlockByNumber(blockNum uint64) (*common.Block, error) {
+	if b.blockHeight-blockNum < 1024 {
+		return b.blockCache[(1024+(b.blockIdx-(b.blockHeight-blockNum)))%1024], nil
+	}
 	if blockNum <= 1 {
 		if uint64(len(b.initialBlocks)) < blockNum+1 {
 			return nil, nil
