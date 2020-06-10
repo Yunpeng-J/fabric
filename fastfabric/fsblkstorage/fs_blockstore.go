@@ -8,10 +8,13 @@ import (
 	"github.com/hyperledger/fabric/fastfabric/remote"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
+	"github.com/op/go-logging"
 	"github.com/pkg/errors"
 	"sync"
 	"sync/atomic"
 )
+
+var logger = logging.MustGetLogger("blkstorage")
 
 func newFsBlockStore(ledgerId string) *BlockStoreImpl {
 	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}, blockCache: make([]*common.Block, 1024), blockIdx: -1}
@@ -92,6 +95,7 @@ func (b *BlockStoreImpl) RetrieveBlockByHash(blockHash []byte) (*common.Block, e
 
 func (b *BlockStoreImpl) RetrieveBlockByNumber(blockNum uint64) (*common.Block, error) {
 	if b.blockHeight-blockNum < 1024 {
+		logger.Infof("Successfully found block [%v] in cache", blockNum)
 		return b.blockCache[(1024+(b.blockIdx-(b.blockHeight-blockNum)))%1024], nil
 	}
 	if blockNum <= 1 {
@@ -100,6 +104,7 @@ func (b *BlockStoreImpl) RetrieveBlockByNumber(blockNum uint64) (*common.Block, 
 		}
 		return b.initialBlocks[blockNum], nil
 	}
+	logger.Infof("Try to find block [%v] on storage server", blockNum)
 	return b.client.RetrieveBlockByNumber(context.Background(), &remote.RetrieveBlockByNumberRequest{
 		LedgerId: b.ledgerId,
 		BlockNo:  blockNum})
