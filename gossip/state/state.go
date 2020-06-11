@@ -456,8 +456,9 @@ func (s *GossipStateProviderImpl) handleStateRequest(msg proto.ReceivedMessage) 
 			Signature: connInfo.Auth.Signature,
 			Identity:  connInfo.Identity,
 		}
+		logger.Info("Before trying to get block and pvt data")
 		block, pvtData, err := s.ledger.GetPvtDataAndBlockByNum(seqNum, peerAuthInfo)
-
+		logger.Info("After trying to get block and pvt data")
 		if err != nil {
 			logger.Errorf("cannot read block number %d from ledger, because %+v, skipping...", seqNum, err)
 			continue
