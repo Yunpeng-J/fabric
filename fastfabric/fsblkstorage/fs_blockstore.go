@@ -17,7 +17,14 @@ import (
 var logger = logging.MustGetLogger("blkstorage")
 
 func newFsBlockStore(ledgerId string) *BlockStoreImpl {
-	return &BlockStoreImpl{ledgerId: ledgerId, client: remote.GetStoragePeerClient(), txCache: sync.Map{}, blockCache: make([]*common.Block, 1024), blockIdx: -1}
+	return &BlockStoreImpl{
+		ledgerId:    ledgerId,
+		client:      remote.GetStoragePeerClient(),
+		txCache:     sync.Map{},
+		blockCache:  make([]*common.Block, 1024),
+		blockIdx:    0,
+		noBlocksYet: true,
+	}
 }
 
 type BlockStoreImpl struct {
@@ -30,6 +37,7 @@ type BlockStoreImpl struct {
 	initialBlocks []*common.Block
 	blockCache    []*common.Block
 	blockIdx      uint64
+	noBlocksYet   bool
 }
 
 func (b *BlockStoreImpl) AddBlock(block *common.Block) error {
@@ -53,7 +61,11 @@ func (b *BlockStoreImpl) AddBlock(block *common.Block) error {
 	b.previousHash = b.currentHash
 	b.currentHash = block.Header.Hash()
 	b.blockHeight = block.Header.Number + 1
-	atomic.AddUint64(&b.blockIdx, 1)
+	if b.noBlocksYet {
+		b.noBlocksYet = false
+	} else {
+		atomic.AddUint64(&b.blockIdx, 1)
+	}
 	b.blockCache[b.blockIdx%1024] = block
 	return nil
 }
