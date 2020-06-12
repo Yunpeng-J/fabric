@@ -106,16 +106,18 @@ func (b *BlockStoreImpl) RetrieveBlockByHash(blockHash []byte) (*common.Block, e
 }
 
 func (b *BlockStoreImpl) RetrieveBlockByNumber(blockNum uint64) (*common.Block, error) {
-	if b.blockHeight-blockNum < 1024 {
-		logger.Infof("Successfully found block [%v] in cache", blockNum)
-		return b.blockCache[(1024+(b.blockIdx-(b.blockHeight-blockNum)))%1024], nil
-	}
 	if blockNum <= 1 {
 		if uint64(len(b.initialBlocks)) < blockNum+1 {
 			return nil, nil
 		}
 		return b.initialBlocks[blockNum], nil
 	}
+
+	if b.blockHeight-blockNum < 1024 {
+		logger.Infof("Successfully found block [%v] in cache", blockNum)
+		return b.blockCache[(1024+(b.blockIdx-(b.blockHeight-blockNum)))%1024], nil
+	}
+
 	logger.Infof("Try to find block [%v] on storage server", blockNum)
 	return b.client.RetrieveBlockByNumber(context.Background(), &remote.RetrieveBlockByNumberRequest{
 		LedgerId: b.ledgerId,

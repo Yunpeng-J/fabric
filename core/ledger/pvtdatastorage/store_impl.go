@@ -576,7 +576,7 @@ func (s *store) ResetLastUpdatedOldBlocksList() error {
 func (s *store) GetPvtDataByBlockNum(blockNum uint64, filter ledger.PvtNsCollFilter) ([]*ledger.TxPvtData, error) {
 
 	//Fastfabric does not work with private data
-	return nil, nil
+	return make([]*ledger.TxPvtData, 0), nil
 
 	//logger.Debugf("Get private data for block [%d], filter=%#v", blockNum, filter)
 	//if s.isEmpty {
