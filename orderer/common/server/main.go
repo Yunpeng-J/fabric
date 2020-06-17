@@ -203,6 +203,9 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 				clusterGRPCServer.Stop()
 			}
 		},
+		syscall.SIGINT: func() {
+			stopwatch.Flush()
+		},
 	}))
 
 	if !reuseGrpcListener && clusterType {
