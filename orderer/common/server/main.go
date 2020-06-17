@@ -74,15 +74,6 @@ var (
 
 // Main is the entry point of orderer process
 func Main() {
-	interruptChan := make(chan os.Signal, 1)
-	done := make(chan error)
-	signal.Notify(interruptChan, os.Interrupt, os.Kill)
-	go func() {
-		for range interruptChan {
-			stopwatch.Flush()
-			done <- nil
-		}
-	}()
 	fullCmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	// "version" command
@@ -206,6 +197,7 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 	logger.Infof("Starting %s", metadata.GetVersionInfo())
 	go handleSignals(addPlatformSignals(map[os.Signal]func(){
 		syscall.SIGTERM: func() {
+			stopwatch.Flush()
 			grpcServer.Stop()
 			if clusterGRPCServer != grpcServer {
 				clusterGRPCServer.Stop()
