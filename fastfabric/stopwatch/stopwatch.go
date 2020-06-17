@@ -14,6 +14,9 @@ var measurements = make(map[string]chan *measurement)
 func SetOutput(label string, f *os.File) {
 	outputs[label] = f
 	measurements[label] = make(chan *measurement, 100000000)
+	fmt.Println(fmt.Sprintf("Starting measurements for [%s]", label))
+	nowLock.Lock()
+	defer nowLock.Unlock()
 	now = prepareMeasurement(label)
 	now.Start()
 }
