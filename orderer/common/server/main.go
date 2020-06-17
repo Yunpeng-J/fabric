@@ -74,7 +74,15 @@ var (
 
 // Main is the entry point of orderer process
 func Main() {
-	defer stopwatch.Flush()
+	interruptChan := make(chan os.Signal, 1)
+	done := make(chan error)
+	signal.Notify(interruptChan, os.Interrupt, os.Kill)
+	go func() {
+		for range interruptChan {
+			stopwatch.Flush()
+			done <- nil
+		}
+	}()
 	fullCmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	// "version" command
