@@ -74,6 +74,7 @@ var (
 
 // Main is the entry point of orderer process
 func Main() {
+	defer stopwatch.Flush()
 	fullCmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	// "version" command
@@ -213,7 +214,6 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 	ab.RegisterAtomicBroadcastServer(grpcServer.Server(), server)
 	logger.Info("Beginning to serve requests")
 	grpcServer.Start()
-	stopwatch.Flush()
 }
 
 func reuseListener(conf *localconfig.TopLevel, typ string) bool {
