@@ -50,7 +50,12 @@ func prepareMeasurement(label string) *measurement {
 	return m
 }
 func FlushSingle(label string, series chan *measurement) {
+	if len(series) == 0 {
+		return
+	}
+
 	f := outputs[label]
+
 	fmt.Println(fmt.Sprintf("Flushing [%d] measurements for [%s]", len(series), label))
 	for m := range series {
 		if f != nil && !m.end.IsZero() {
