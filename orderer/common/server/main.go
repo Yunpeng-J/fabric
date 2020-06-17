@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	common1 "github.com/hyperledger/fabric/protos/msp"
 	"io/ioutil"
 	"net"
@@ -212,6 +213,7 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 	ab.RegisterAtomicBroadcastServer(grpcServer.Server(), server)
 	logger.Info("Beginning to serve requests")
 	grpcServer.Start()
+	stopwatch.Flush()
 }
 
 func reuseListener(conf *localconfig.TopLevel, typ string) bool {
