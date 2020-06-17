@@ -15,10 +15,6 @@ func SetOutput(label string, f *os.File) {
 	outputs[label] = f
 	measurements[label] = make(chan *measurement, 100000000)
 	fmt.Println(fmt.Sprintf("Starting measurements for [%s]", label))
-	nowLock.Lock()
-	defer nowLock.Unlock()
-	now = prepareMeasurement(label)
-	now.Start()
 }
 
 func Measure(label string, f func()) {
@@ -33,7 +29,7 @@ func MeasureWithComment(label string, comment string, f func()) {
 	f()
 }
 
-var now *measurement
+var now = &measurement{}
 var nowLock sync.Mutex
 var isFlushing int32
 
@@ -48,10 +44,9 @@ func Now(label string) {
 func prepareMeasurement(label string) *measurement {
 	m := &measurement{}
 	channel, ok := measurements[label]
-	if !ok {
-		panic(fmt.Sprintf("output not set for measurements [%s]", label))
+	if ok {
+		channel <- m
 	}
-	channel <- m
 	return m
 }
 func FlushSingle(label string, series chan *measurement) {
