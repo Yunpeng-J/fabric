@@ -10,10 +10,12 @@ import (
 
 var outputs = make(map[string]*os.File)
 var measurements = make(map[string]chan *measurement)
-var DefaultOutput *os.File
 
 func SetOutput(label string, f *os.File) {
 	outputs[label] = f
+	measurements[label] = make(chan *measurement, 100000000)
+	now = prepareMeasurement(label)
+	now.Start()
 }
 
 func Measure(label string, f func()) {
@@ -30,16 +32,11 @@ func MeasureWithComment(label string, comment string, f func()) {
 
 var now *measurement
 var nowLock sync.Mutex
-var flushLock sync.RWMutex
 var isFlushing int32
 
 func Now(label string) {
 	nowLock.Lock()
 	defer nowLock.Unlock()
-	if now == nil {
-		now = prepareMeasurement(label)
-		now.Start()
-	}
 	now.Stop()
 	now = prepareMeasurement(label)
 	now.Start()
@@ -47,25 +44,16 @@ func Now(label string) {
 
 func prepareMeasurement(label string) *measurement {
 	m := &measurement{}
-
-	flushLock.RLock()
 	channel, ok := measurements[label]
-	flushLock.RUnlock()
 	if !ok {
-		channel = make(chan *measurement, 100000000)
-		flushLock.Lock()
-		measurements[label] = channel
-		flushLock.Unlock()
+		panic(fmt.Sprintf("output not set for measurements [%s]", label))
 	}
 	channel <- m
 	return m
 }
 func FlushSingle(label string, series chan *measurement) {
-	f, ok := outputs[label]
-	if !ok {
-		f = DefaultOutput
-	}
-	fmt.Println("Flushing measurements to output", label)
+	f := outputs[label]
+	fmt.Println(fmt.Sprintf("Flushing [%d] measurements for [%s]", len(series), label))
 	for m := range series {
 		if f != nil && !m.end.IsZero() {
 			_, _ = fmt.Fprintln(f, m.Duration().Nanoseconds(), "\t", m.comment)
@@ -77,22 +65,15 @@ func Flush() {
 	if atomic.CompareAndSwapInt32(&isFlushing, 0, 1) {
 		fmt.Println("Start flushing measurements")
 		wg := &sync.WaitGroup{}
-		flushLock.RLock()
 		for label, data := range measurements {
 			wg.Add(1)
 			go func(l string, s chan *measurement) {
 				defer wg.Done()
 				FlushSingle(l, s)
 			}(label, data)
-			flushLock.RUnlock()
-			flushLock.Lock()
-			measurements[label] = nil
-			flushLock.Unlock()
-			flushLock.RLock()
 			close(data)
 		}
 		wg.Wait()
-		flushLock.RUnlock()
 		atomic.StoreInt32(&isFlushing, 0)
 		fmt.Println("Done flushing measurements")
 	}
