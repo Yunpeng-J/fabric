@@ -205,6 +205,10 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 		},
 		syscall.SIGINT: func() {
 			stopwatch.Flush()
+			grpcServer.Stop()
+			if clusterGRPCServer != grpcServer {
+				clusterGRPCServer.Stop()
+			}
 		},
 	}))
 
