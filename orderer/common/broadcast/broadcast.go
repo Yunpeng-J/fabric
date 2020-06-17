@@ -9,6 +9,7 @@ package broadcast
 import (
 	"context"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
+	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"github.com/hyperledger/fabric/protos/peer"
 	"io"
 	"time"
@@ -64,6 +65,7 @@ type Handler struct {
 	SupportRegistrar ChannelSupportRegistrar
 	Metrics          *Metrics
 	Validator        validator.PreordervalidatorClient
+	WithStopwatch    bool
 }
 
 // Handle reads requests from a Broadcast stream, processes them, and returns the responses to the stream
@@ -87,6 +89,9 @@ func (bh *Handler) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 				return
 			}
 			msgs <- msg
+			if bh.WithStopwatch {
+				stopwatch.Now("orderer")
+			}
 		}
 	}()
 
@@ -108,6 +113,9 @@ func (bh *Handler) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 			logger.Warningf("Error sending to %s: %s", addr, err)
 			return e
 		}
+	}
+	if bh.WithStopwatch {
+		stopwatch.Flush()
 	}
 	return err
 }

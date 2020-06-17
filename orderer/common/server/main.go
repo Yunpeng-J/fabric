@@ -63,9 +63,10 @@ var logger = flogging.MustGetLogger("orderer.common.server")
 var (
 	app = kingpin.New("orderer", "Hyperledger Fabric orderer node")
 
-	start     = app.Command("start", "Start the orderer node").Default()
-	version   = app.Command("version", "Show version information")
-	benchmark = app.Command("benchmark", "Run orderer in benchmark mode")
+	start         = app.Command("start", "Start the orderer node").Default()
+	version       = app.Command("version", "Show version information")
+	benchmark     = app.Command("benchmark", "Run orderer in benchmark mode")
+	withStopwatch = app.Flag("stopwatch", "Run orderer with enabled stopwatch").Short('s').Bool()
 
 	clusterTypes = map[string]struct{}{"etcdraft": {}}
 )
@@ -190,7 +191,7 @@ func Start(cmd string, conf *localconfig.TopLevel) {
 	manager := initializeMultichannelRegistrar(clusterBootBlock, r, clusterDialer, clusterServerConfig, clusterGRPCServer, conf, signer, metricsProvider, opsSystem, lf, tlsCallback)
 	mutualTLS := serverConfig.SecOpts.UseTLS && serverConfig.SecOpts.RequireClientCert
 	expiration := conf.General.Authentication.NoExpirationChecks
-	server := NewServer(manager, metricsProvider, &conf.Debug, conf.General.Authentication.TimeWindow, mutualTLS, expiration, conf.Operations.ValidatorAddress)
+	server := NewServer(manager, metricsProvider, &conf.Debug, conf.General.Authentication.TimeWindow, mutualTLS, expiration, conf.Operations.ValidatorAddress, stopwatch)
 
 	logger.Infof("Starting %s", metadata.GetVersionInfo())
 	go handleSignals(addPlatformSignals(map[os.Signal]func(){

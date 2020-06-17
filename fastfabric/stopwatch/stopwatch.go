@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +30,8 @@ func MeasureWithComment(label string, comment string, f func()) {
 
 var now *measurement
 var nowLock sync.Mutex
+var flushLock sync.RWMutex
+var isFlushing int32
 
 func Now(label string) {
 	nowLock.Lock()
@@ -45,11 +48,16 @@ func Now(label string) {
 func prepareMeasurement(label string) *measurement {
 	m := &measurement{}
 
-	_, ok := measurements[label]
+	flushLock.RLock()
+	channel, ok := measurements[label]
+	flushLock.RUnlock()
 	if !ok {
-		measurements[label] = make(chan *measurement, 100000000)
+		channel = make(chan *measurement, 100000000)
+		flushLock.Lock()
+		measurements[label] = channel
+		flushLock.Unlock()
 	}
-	measurements[label] <- m
+	channel <- m
 	return m
 }
 func FlushSingle(label string, series chan *measurement) {
@@ -66,18 +74,27 @@ func FlushSingle(label string, series chan *measurement) {
 }
 
 func Flush() {
-	fmt.Println("Start flushing measurements")
-	wg := &sync.WaitGroup{}
-	for label, data := range measurements {
-		wg.Add(1)
-		go func(l string, s chan *measurement) {
-			defer wg.Done()
-			FlushSingle(l, s)
-		}(label, data)
-		measurements[label] = nil
-		close(data)
+	if atomic.CompareAndSwapInt32(&isFlushing, 0, 1) {
+		fmt.Println("Start flushing measurements")
+		wg := &sync.WaitGroup{}
+		flushLock.RLock()
+		for label, data := range measurements {
+			wg.Add(1)
+			go func(l string, s chan *measurement) {
+				defer wg.Done()
+				FlushSingle(l, s)
+			}(label, data)
+			flushLock.RUnlock()
+			flushLock.Lock()
+			measurements[label] = nil
+			flushLock.Unlock()
+			flushLock.RLock()
+			close(data)
+		}
+		wg.Wait()
+		flushLock.RUnlock()
+		atomic.StoreInt32(&isFlushing, 0)
 	}
-	wg.Wait()
 }
 
 type measurement struct {

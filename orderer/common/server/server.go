@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
+	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"io/ioutil"
 	"os"
 	"runtime/debug"
@@ -82,6 +83,7 @@ func NewServer(
 	mutualTLS bool,
 	expirationCheckDisabled bool,
 	validatorAddress string,
+	withStopwatch bool,
 ) ab.AtomicBroadcastServer {
 	var client validator.PreordervalidatorClient
 	var err error
@@ -91,6 +93,14 @@ func NewServer(
 			panic(err)
 		}
 	}
+	if withStopwatch {
+		f, err := os.OpenFile("orderer.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			panic("Could not open log file for stopwatch")
+		}
+		stopwatch.SetOutput("orderer", f)
+	}
+
 	s := &server{
 		dh: deliver.NewHandler(
 			deliverSupport{Registrar: r},
@@ -103,6 +113,7 @@ func NewServer(
 			SupportRegistrar: broadcastSupport{Registrar: r},
 			Metrics:          broadcast.NewMetrics(metricsProvider),
 			Validator:        client,
+			WithStopwatch:    withStopwatch,
 		},
 		debug:     debug,
 		Registrar: r,
