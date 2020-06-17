@@ -71,7 +71,6 @@ func Flush() {
 				defer wg.Done()
 				FlushSingle(l, s)
 			}(label, data)
-			close(data)
 		}
 		wg.Wait()
 		atomic.StoreInt32(&isFlushing, 0)
