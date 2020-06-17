@@ -94,6 +94,7 @@ func Flush() {
 		wg.Wait()
 		flushLock.RUnlock()
 		atomic.StoreInt32(&isFlushing, 0)
+		fmt.Println("Done flushing measurements")
 	}
 }
 
