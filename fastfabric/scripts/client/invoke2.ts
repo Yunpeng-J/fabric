@@ -78,14 +78,20 @@ async function main() {
 
         console.log(`Thread ${iteration}: Start sending transactions`);
 
+        var responses: Array<Promise<BroadcastResponse>> = [];
         for (let i = 0; i < bcResps.length; i++) {
             var propResp = <ProposalResponse[]>(bcResps[i][0]);
-            var res = await channel.sendTransaction({ proposalResponses: propResp, proposal: bcResps[i][1] });
+            var promise = channel.sendTransaction({ proposalResponses: propResp, proposal: bcResps[i][1] });
+            responses.push(promise)
+        }
+        for (let i = 0; i < responses.length; i++) {
+            let res = await responses[i]
             if (res.status != "SUCCESS") {
                 console.log(`Thread ${iteration}: ${res.status}`);
             }
             tIdx++
         }
+
 
         // Disconnect from the gateway.
         await gateway.disconnect();

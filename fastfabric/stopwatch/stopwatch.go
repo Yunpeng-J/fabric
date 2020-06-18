@@ -41,6 +41,15 @@ func Now(label string) {
 	now.Start()
 }
 
+func NowWithComment(label string, comment string) {
+	nowLock.Lock()
+	defer nowLock.Unlock()
+	now.Stop()
+	now = prepareMeasurement(label)
+	now.comment = comment
+	now.Start()
+}
+
 func prepareMeasurement(label string) *measurement {
 	m := &measurement{}
 	channel, ok := measurements[label]

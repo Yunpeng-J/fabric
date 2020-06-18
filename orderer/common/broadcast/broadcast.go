@@ -12,6 +12,7 @@ import (
 	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"github.com/hyperledger/fabric/protos/peer"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
@@ -90,7 +91,7 @@ func (bh *Handler) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 			}
 			msgs <- msg
 			if bh.WithStopwatch {
-				stopwatch.Now("orderer")
+				stopwatch.NowWithComment("orderer", strconv.Itoa(msg.XXX_Size()))
 			}
 		}
 	}()
