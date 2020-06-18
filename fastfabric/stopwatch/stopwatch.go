@@ -56,7 +56,7 @@ func FlushSingle(label string, series chan *measurement) {
 
 	f := outputs[label]
 
-	fmt.Println(fmt.Sprintf("Flushing [%d] measurements for [%s]", len(series), label))
+	fmt.Println(fmt.Sprintf("Flushing [%d] measurements for [%s]", len(series)-1, label))
 	for m := range series {
 		if f != nil && !m.end.IsZero() {
 			_, _ = fmt.Fprintln(f, m.Duration().Nanoseconds(), "\t", m.comment)
