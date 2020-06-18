@@ -114,9 +114,6 @@ func (bh *Handler) Handle(srv ab.AtomicBroadcast_BroadcastServer) error {
 			return e
 		}
 	}
-	if bh.WithStopwatch {
-		stopwatch.Flush()
-	}
 	return err
 }
 

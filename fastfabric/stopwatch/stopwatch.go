@@ -50,7 +50,7 @@ func prepareMeasurement(label string) *measurement {
 	return m
 }
 func FlushSingle(label string, series chan *measurement) {
-	if len(series) == 0 {
+	if len(series) <= 1 {
 		return
 	}
 
@@ -61,7 +61,7 @@ func FlushSingle(label string, series chan *measurement) {
 		if f != nil && !m.end.IsZero() {
 			_, _ = fmt.Fprintln(f, m.Duration().Nanoseconds(), "\t", m.comment)
 		}
-		if len(series) == 0 {
+		if len(series) <= 1 {
 			break
 		}
 	}
