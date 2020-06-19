@@ -8,7 +8,6 @@ package server
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/fastfabric/config"
 	"github.com/hyperledger/fabric/fastfabric/preorderval/validator"
 	"github.com/hyperledger/fabric/fastfabric/stopwatch"
 	"io/ioutil"
@@ -87,7 +86,7 @@ func NewServer(
 ) ab.AtomicBroadcastServer {
 	var client validator.PreordervalidatorClient
 	var err error
-	if config.ValidatorAddress != "" {
+	if validatorAddress != "" {
 		client, err = validator.StartValidatorClient(validatorAddress)
 		if err != nil {
 			panic(err)
