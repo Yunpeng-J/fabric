@@ -1,0 +1,18 @@
+OrdererOrgs:
+- Name: Orderer
+  Domain: example.com
+  Specs:
+    - Hostname: xox_orderer
+PeerOrgs:
+- Name: Org1
+  Domain: org1.example.com
+  EnableNodeOUs: true
+  Specs:
+    - Hostname: xox_fastpeer
+    - Hostname: xox_storagepeer
+    - Hostname: xox_peer0
+    - Hostname: xox_peer1
+    - Hostname: xox_peer2
+    - Hostname: xox_peer3
+  Users:
+    Count: 5
