@@ -100,7 +100,7 @@ services:
     deploy: 
       placement:
         constraints:
-          - node.hostname==heming-rdma6
+          - node.hostname==heming-rdma18
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
@@ -132,7 +132,7 @@ services:
     deploy: 
       placement:
         constraints:
-          - node.hostname==heming-rdma6
+          - node.hostname==heming-rdma18
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
@@ -163,7 +163,7 @@ services:
     deploy: 
       placement:
         constraints:
-          - node.hostname==heming-rdma6
+          - node.hostname==heming-rdma19
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
@@ -194,7 +194,7 @@ services:
     deploy: 
       placement:
         constraints:
-          - node.hostname==heming-rdma6
+          - node.hostname==heming-rdma19
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
@@ -254,3 +254,19 @@ services:
     - fastpeer
     - storagepeer
     - orderer
+  tape:
+    container_name: tape
+    image: tape:latest
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==heming-rdma6
+    networks:
+    - HLF
+    stdin_open: true
+    tty: true
+    working_dir: /
+    command: /bin/sh 
+    volumes: 
+    - /home/yunpeng/hlf_xox_env/tape.yaml:/config.yaml
+    - /home/yunpeng/hlf_xox_env/organizations:/organizations

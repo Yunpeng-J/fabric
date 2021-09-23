@@ -1,0 +1,68 @@
+# Definition of nodes
+peer0: &peer0
+  addr: xox_peer0:7051
+  #tls_ca_cert: ./organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem
+
+peer1: &peer1
+  addr: xox_peer1:7051
+  #tls_ca_cert: ./organizations/peerOrganizations/org1.example.com/peers/peer1.org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem
+
+peer2: &peer2
+  addr: xox_peer2:7051
+  #tls_ca_cert: ./organizations/peerOrganizations/org1.example.com/peers/peer2.org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem
+
+peer3: &peer3
+  addr: xox_peer3:7051
+  #tls_ca_cert: ./organizations/peerOrganizations/org1.example.com/peers/peer3.org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem
+
+fastpeer: &fastpeer
+  addr: xox_fastpeer:7051
+storagepeer: &storagepeer
+  addr: xox_storagepeer:7051
+
+orderer1: &orderer1
+  addr: xox_orderer:7050
+  #tls_ca_cert: ./organizations/ordererOrganizations/example.com/msp/tlscacerts/tlsca.example.com-cert.pem
+
+# tape will divide endorsers into $endorser_groups groups. 
+# For example, if we have 9 endorsers and set endorser_groups=3, then the first
+# three endorsers belong to group_1, the middle endorsers belong to group_2, the
+# last three endorsers belong to group_3. 
+endorser_groups: 4
+endorsers:
+  - *peer0
+  - *peer1
+  - *peer2
+  - *peer3
+committer: *fastpeer
+orderer: *orderer1
+
+# Invocation configs
+channel: mychannel
+chaincode: smallbank
+# args:
+num_of_conn: 2
+client_per_conn: 1
+threads: 10
+orderer_client: 200
+mspid: Org1MSP
+private_key: ./organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore/priv_sk
+sign_cert: ./organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/User1@org1.example.com-cert.pem
+
+num_of_conn: 16
+client_per_conn: 16
+orderer_client: 20
+threads: 10
+
+num_of_transactions: 50000
+time_of_transactions: 120 #TODO
+tx_type: put
+
+logdir: log.transactions
+
+# if check_txid is false, Fabric must disable txid check in peer and orderer.  
+# It should always be set to true. 
+check_txid: true 
+check_rwset: false # if true, output rwset for each transaction
+e2e: false  # end-to-end test
+seed: 2 # if seed equals to 0, set seed to the current time.
