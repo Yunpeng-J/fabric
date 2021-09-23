@@ -7,7 +7,9 @@ import (
 var storageClient StoragePeerClient
 
 func StartStoragePeerClient(address string) error {
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	// TODO: use stream
+	var MAXSIZE = 64 * 1024 * 1024
+	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MAXSIZE), grpc.MaxCallSendMsgSize(MAXSIZE)))
 	if err != nil {
 		return err
 	}
