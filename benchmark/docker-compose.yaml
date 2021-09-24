@@ -13,7 +13,7 @@ services:
         - node.hostname==heming-rdma14
     environment: 
       - GOPATH=/opt/gopath
-      - FABRIC_LOGGING_SPEC=DEBUG
+      - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
       - ORDERER_GENERAL_LISTENPORT=7050
       - ORDERER_GENERAL_LEDGERTYPE=ram
@@ -26,6 +26,8 @@ services:
     volumes: 
       - /home/yunpeng/hlf_xox_env/channel-artifacts/genesis.block:/var/hyperledger/orderer/orderer.genesis.block
       - /home/yunpeng/hlf_xox_env/organizations/ordererOrganizations/example.com/orderers/xox_orderer.example.com/msp:/var/hyperledger/orderer/msp
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-orderer:/var/hyperledger/production/orderer # ramdisk
     networks:
       - HLF
@@ -40,7 +42,7 @@ services:
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start --storageAddr xox_storagepeer:10000"
     environment:
       - GOPATH=/opt/gopath
-      - FABRIC_LOGGING_SPEC=DEBUG
+      - FABRIC_LOGGING_SPEC=INFO
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -58,6 +60,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_fastpeer.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-fastpeer:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -73,7 +77,7 @@ services:
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -s --storageAddr 0.0.0.0:10000"
     environment:
       - GOPATH=/opt/gopath
-      - FABRIC_LOGGING_SPEC=DEBUG
+      - FABRIC_LOGGING_SPEC=INFO
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -91,6 +95,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_storagepeer.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-storagepeer:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -105,7 +111,7 @@ services:
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
       - GOPATH=/opt/gopath
-      - FABRIC_LOGGING_SPEC=DEBUG 
+      - FABRIC_LOGGING_SPEC=INFO 
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -123,6 +129,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_peer0.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-peer0:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -136,7 +144,7 @@ services:
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
-      - FABRIC_LOGGING_SPEC=DEBUG 
+      - FABRIC_LOGGING_SPEC=INFO 
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -154,6 +162,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_peer1.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-peer1:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -167,7 +177,7 @@ services:
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
-      - FABRIC_LOGGING_SPEC=DEBUG 
+      - FABRIC_LOGGING_SPEC=INFO 
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -185,6 +195,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_peer2.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-peer2:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -198,7 +210,7 @@ services:
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: sh -c "mkdir -p /var/hyperledger/production && peer node start -e --storageAddr xox_storagepeer:10000"
     environment:
-      - FABRIC_LOGGING_SPEC=DEBUG 
+      - FABRIC_LOGGING_SPEC=INFO 
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
       - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=HLF
       - CORE_PEER_LOCALMSPID=Org1MSP
@@ -216,6 +228,8 @@ services:
       - /var/run/:/host/var/run/
       - /home/yunpeng/hlf_xox_env/organizations/peerOrganizations/org1.example.com/peers/xox_peer3.org1.example.com/msp:/etc/hyperledger/fabric/msp
       - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+      - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
       # - /home/yunpeng/benchmark-peer3:/var/hyperledger/production # ramdisk
     networks:
       - HLF
@@ -245,6 +259,8 @@ services:
     - /home/yunpeng/hlf_xox_env/scripts:/opt/gopath/src/github.com/hyperledger/fabric/peer/scripts
     - /home/yunpeng/hlf_xox_env/channel-artifacts:/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts
     - /home/yunpeng/hlf_xox_env/chaincode:/opt/gopath/src/github.com/hyperledger/fabric/chaincode
+    - /home/yunpeng/hlf_xox_env/core.yaml:/etc/hyperledger/fabric/core.yaml
+    - /home/yunpeng/hlf_xox_env/orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     depends_on:
     - peer0

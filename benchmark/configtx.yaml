@@ -61,11 +61,11 @@ Orderer: &OrdererDefaults
   OrdererType: solo
   Addresses:
   - xox_orderer:7050
-  BatchTimeout: 1s
+  BatchTimeout: 2s
   BatchSize:
-    MaxMessageCount: 1500
-    AbsoluteMaxBytes: 980 MB
-    PreferredMaxBytes: 512000 KB
+    MaxMessageCount: 100
+    AbsoluteMaxBytes: 98 MB
+    PreferredMaxBytes: 20 MB
   Organizations:
   Policies:
     Readers:

@@ -188,9 +188,10 @@ func (b *blocksProviderImpl) DeliverBlocks() {
 				gossipChan := gossip.GetQueue(blockNum)
 				go func(c chan *gossip_proto.Payload) {
 					// Gossip messages with other nodes
-					logger.Debugf("[%s] Gossiping block [%d], peers number [%d]", b.chainID, blockNum, numberOfPeers)
+					logger.Infof("[%s] Gossiping block [%d] is preparing, peers number [%d]", b.chainID, blockNum, numberOfPeers)
 					// Use payload to create gossip message
 					gossipMsg := createGossipMsg(b.chainID, <-c)
+					logger.Infof("[%s] Gossiping block [%d] done, peers number [%d]", b.chainID, blockNum, numberOfPeers)
 					if !b.isDone() {
 						b.gossip.Gossip(gossipMsg)
 					}
